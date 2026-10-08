@@ -1,0 +1,13 @@
+# 临时产物
+*.log
+*.tmp
+*.bak
+/temp/
+/_temp/
+
+# LuaLS 缓存
+.luarc-cache/
+
+# 参考素材（静态反编译产物 / 截图，体积大且不参与构建）
+genshin_map/
+游戏截图/

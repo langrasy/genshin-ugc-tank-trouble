@@ -1,0 +1,36 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "runtime.version": "Lua 5.3",
+  "runtime.builtin": {
+    "io": "disable",
+    "package": "disable",
+    "debug": "disable",
+    "coroutine": "disable"
+  },
+  "diagnostics.globals": [
+    "script",
+    "game",
+    "Enum",
+    "Color",
+    "printerr",
+    "typeof"
+  ],
+  "diagnostics.disable": [
+    "lowercase-global",
+    "unused-local",
+    "unused-label",
+    "redundant-parameter",
+    "redundant-return-value"
+  ],
+  "workspace.library": [
+    "./types"
+  ],
+  "workspace.checkThirdParty": false,
+  "workspace.ignoreDir": [
+    ".git",
+    "tools",
+    "reference",
+    "游戏截图"
+  ],
+  "format.enable": false
+}

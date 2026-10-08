@@ -1,0 +1,7 @@
+# 统一换行，避免 core.autocrlf 把 .lua 改成 CRLF、把 .cmd 改成 LF
+# 约定见 README：*.lua 用 LF；*.cmd 用 CRLF（且带 UTF-8 BOM）
+* text=auto eol=lf
+*.lua  text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.cmd  text eol=crlf

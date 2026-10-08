@@ -1,0 +1,27 @@
+root = true
+
+# 默认：UTF-8（无 BOM）、LF、4 空格缩进
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# Windows 批处理：必须 UTF-8 带 BOM + CRLF，否则 cmd.exe 解析错乱
+[*.cmd]
+charset = utf-8-bom
+end_of_line = crlf
+indent_size = 2
+
+[*.bat]
+charset = utf-8-bom
+end_of_line = crlf
+indent_size = 2
+
+[*.{md,json}]
+indent_size = 2
+
+[*.yml]
+indent_size = 2
