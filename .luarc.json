@@ -13,7 +13,9 @@
     "Enum",
     "Color",
     "printerr",
-    "typeof"
+    "typeof",
+    "require",
+    "package"
   ],
   "diagnostics.disable": [
     "lowercase-global",

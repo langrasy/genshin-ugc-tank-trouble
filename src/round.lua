@@ -52,7 +52,7 @@ function M.pickCratePos(ctx)
   local reachable = ctx.reachable
   if #reachable == 0 then return nil end
 
-  local pos = 1                       -- 对应原版 pos = 0
+  local pos = 1                       -- 对应原版 pos = 0；0 视为"取不到"
   local retry = true                  -- 对应 _loc5_
   local tries = -1                    -- 对应 _loc9_
   local maxed = ctx.numberOfCrates >= ctx.settings.maxCrates
@@ -66,13 +66,13 @@ function M.pickCratePos(ctx)
     if #ctx.crateSpawnPoints > 0 then
       local sp = ctx.crateSpawnPoints[rnd(#ctx.crateSpawnPoints) + 1]
       local i0 = ctx.reachableIndex[sp.x][sp.y]
-      pos = (i0 ~= nil) and (i0 + 1) or nil
+      pos = (i0 ~= nil) and (i0 + 1) or 0
     else
       pos = rnd(#reachable) + 1
     end
     retry = false
     tries = tries + 1
-    if pos == nil then
+    if pos == 0 then
       retry = true
     else
       for i = 1, #ctx.tanks do
@@ -85,7 +85,7 @@ function M.pickCratePos(ctx)
     end
   end
 
-  if tries < 5 and not maxed and pos ~= nil then return pos end
+  if tries < 5 and not maxed and pos ~= 0 then return pos end
   return nil
 end
 

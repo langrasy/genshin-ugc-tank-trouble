@@ -2,26 +2,53 @@
 
 原神「千星奇域」UGC 地图小游戏 —— 坦克动荡（Tank Trouble）。本仓库是本地开发工作区。
 
+玩法逻辑逐行对照 4399 Flash 版（TankTrouble2）反编译 ActionScript 2.0 源码移植，
+数值（迷宫尺寸、SCALE、坦克物理、9 种武器、敌方 AI、回合计时 125/50/5）均未改动。
+
+## 架构
+
+源码分为「纯逻辑」与「平台层」两部分，由打包器内联成单文件产物：
+
+```
+src/*.lua            纯逻辑（迷宫 / 坦克物理 / 武器 / AI / 回合），可脱离游戏运行时单测
+platform/game.lua    千星奇域平台层（控件渲染 / 按键事件 / 生命周期 / 逐帧驱动）
+        │
+        │  tools\bundle.ps1  （内联 src/ + 附加平台层，注入 require 垫片）
+        ▼
+tank_trouble.lua     单文件产物 —— 部署到游戏的就是它
+```
+
+> 千星奇域运行时**没有 `require`**，所以最终必须是一份单文件。`bundle.ps1` 在产物顶部
+> 注入一个 `local require` 垫片，各模块体注册进 `__defs`，模块内的 `require` 经词法作用域
+> 解析到垫片（不污染全局）。**不要手改 `tank_trouble.lua`**，改 `src/` 或 `platform/` 后重新打包。
+
 ## 目录结构
 
 | 路径 | 作用 |
 | --- | --- |
-| `tank_trouble.lua` | **主源码**（唯一需要编辑的游戏脚本） |
+| `src/constants.lua` | 全局常量（尺寸、颜色、舞台 MOVIEWIDTH/MOVIEHEIGHT 等） |
+| `src/maze.lua` | 迷宫生成 + 8 向 BFS 距离场寻路 |
+| `src/tank.lua` | 坦克物理（5 子步移动、碰撞、脱困） |
+| `src/weapons.lua` | 9 种武器行为 |
+| `src/ai.lua` | 敌方 AI（目标优先级、寻路跟随、避障） |
+| `src/round.lua` | 回合管理、计分、补给箱生成 |
+| `platform/game.lua` | 千星奇域平台层（渲染 / 输入 / 菜单 / 舞台布局） |
+| `tank_trouble.lua` | **单文件产物**（由 `tools\bundle.ps1` 生成，勿手改） |
+| `tests/` | 纯逻辑单测 + 平台层冒烟测试（标准 Lua 桩件模拟运行时） |
+| `types/` | LuaLS 类型桩：`game_api.lua`（自动生成）+ `project.lua`（手写补充） |
+| `tools/setup.cmd` | 环境安装 / 自检（可反复运行，无需管理员权限） |
+| `tools/bundle.cmd` | 打包：`src/` + `platform/` → `tank_trouble.lua` |
+| `tools/check.cmd` | 语法检查（`luac -p`）+ 静态检查（LuaLS） |
+| `tools/test.cmd` | 运行 `tests/` 下全部单测 |
+| `tools/deploy.cmd` | 打包 → 语法检查 → 复制到映射目录 → 校验 MD5 一致 |
 | `客户端控件API文档` | 官方控件 / API 文档（Markdown，无扩展名） |
-| `types/` | LuaLS 类型桩：`game_api.lua`（自动生成，勿手改）+ `project.lua`（手写补充） |
-| `tools/setup.cmd` | 环境安装 / 自检（可反复运行） |
-| `tools/check.cmd` | 语法检查 + 静态检查 |
-| `tools/deploy.cmd` | 部署到千星奇域映射目录并校验 |
-| `.luarc.json` | LuaLS 配置（Lua 5.3 运行时、全局变量、库路径） |
-| `.editorconfig` | 编码 / 换行 / 缩进约定（编辑器自动遵循） |
-| `.gitignore` | Git 忽略规则 |
-| `游戏截图/` | 游戏内截图，仅作参考，不参与构建 |
+| `.luarc.json` / `.editorconfig` / `.gitignore` | 检查器、编码换行、忽略规则 |
 
 ## 环境依赖
 
 | 工具 | 用途 | 版本 |
 | --- | --- | --- |
-| Lua（`luac`） | 语法检查 `luac -p` | 5.4.6 |
+| Lua（`luac` / `lua`） | 语法检查 `luac -p`、运行单测 | 5.4.6 |
 | lua-language-server | 静态检查（抓方法名 / 字段名错误） | 3.19.1 |
 | Git | 版本控制 | — |
 
@@ -37,8 +64,10 @@ tools\setup.cmd
 ## 常用命令
 
 ```
-tools\check.cmd     :: 语法检查 + 静态检查
-tools\deploy.cmd    :: 语法检查 → 复制到映射目录 → 校验 MD5 一致
+tools\bundle.cmd    :: 打包 src/ + platform/ → tank_trouble.lua
+tools\check.cmd     :: 语法检查 + 静态检查（对 tank_trouble.lua）
+tools\test.cmd      :: 运行 tests/ 下全部单测（先自动打包）
+tools\deploy.cmd    :: 打包 → 语法检查 → 复制到映射目录 → 校验 MD5 一致
 tools\setup.cmd     :: 安装 / 自检依赖
 ```
 
@@ -51,6 +80,15 @@ tools\setup.cmd     :: 安装 / 自检依赖
 
 `deploy.cmd` 通过“遍历 miHoYo 下各游戏目录、取真正包含目标路径的那个”来定位，不硬编码
 “原神”目录名（机器上同时存在《绝区零》等目录，硬编码 / 取最后一个都会抓错）。
+
+## 建议工作流
+
+1. 编辑 `src/*.lua`（逻辑）或 `platform/game.lua`（平台层）
+2. `tools\check.cmd` —— 语法 / 静态检查，先消灭告警
+3. `tools\test.cmd` —— 单测 + 平台层冒烟测试
+4. `tools\deploy.cmd` —— 打包、部署并校验哈希一致
+5. 进游戏验证
+6. `git commit`（建议小步提交，便于回滚）
 
 ## 编码与换行约定（重要）
 
@@ -83,10 +121,10 @@ tools\setup.cmd     :: 安装 / 自检依赖
 
 若修改了 API 文档，重新生成 `types/game_api.lua` 即可；`project.lua` 需手工维护。
 
-## 建议工作流
+## 本地化说明（相对原版 Flash 的差异）
 
-1. 编辑 `tank_trouble.lua`
-2. `tools\check.cmd` —— 语法 / 静态检查，先消灭告警
-3. `tools\deploy.cmd` —— 部署并校验哈希一致
-4. 进游戏验证
-5. `git commit`（建议小步提交，便于回滚）
+原版依赖外部服务器的功能，在千星奇域内改为等价本地方案，游戏内「关于 / 说明」页有同样说明：
+
+- **联机对战** → 本地单人对战 AI。
+- **成就与统计上传**（pixvi.net）→ 本地记录，不联网、不上传。
+- **我的 / 他人自定义迷宫** → 依赖外部数据源，本地暂无，仅随机迷宫生效。

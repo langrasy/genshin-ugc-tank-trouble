@@ -165,9 +165,11 @@ end
 -- 4. checkBulletPath —— 第 269-383 行
 --    以当前朝向模拟普通弹弹道（1/3 寿命），判断命中/自杀/最近距离
 -- ============================================================
-local function checkBulletPath(ai, angle, maxClosestDistance)
+local function checkBulletPath(ai, angle)
   local ctx, tank = ai.ctx, ai.tank
   local scale = ctx.scale
+  -- 原版此处直接读全局 MAXCLOSESTDISTANCE（= SCALE × MAXCLOSESTCELLDISTANCE）
+  local maxClosestDistance = ai.MAXCLOSESTDISTANCE
   local x = tank.x + cos((angle - 90) * RAD) * scale * 4.5 / 16
   local y = tank.y + sin((angle - 90) * RAD) * scale * 4.5 / 16
   local xs = cos((angle - 90) * RAD) * C.BULLETSPEED * (scale / 50)
@@ -334,7 +336,7 @@ local function tryToRetaliate(ai)
       local found = false
       local bestTime = C.BULLETLIFETIME
       local closest = C.MOVIEWIDTH + C.MOVIEHEIGHT
-      local r = checkBulletPath(ai, tank.rot, ai.MAXCLOSESTDISTANCE)
+      local r = checkBulletPath(ai, tank.rot)
       if r.result == "HIT" then
         found = true
         if r.time < bestTime then bestTime = r.time; closest = 0 end
@@ -410,7 +412,8 @@ function M.new(tank, ctx)
     MAXCELLDISTTODODGEBULLET        = MAXTIMETODODGEBULLET * C.BULLETSPEED / 50,
     MAXCELLDISTTODODGEGATLINGBULLET = MAXTIMETODODGEGATLINGBULLET * C.GATLINGSPEED / 50,
   }
-  return ai
+  -- 决策树方法定义在模块表 M 上（M:xxx），实例经 __index 取用
+  return setmetatable(ai, { __index = M })
 end
 
 -- ============================================================
@@ -718,7 +721,7 @@ function M:decideActionsToAchieveGoal()
 
     if not found then
       for k = 1, 3 do
-        local r = checkBulletPath(self, self.MAXCLOSESTDISTANCE)
+        local r = checkBulletPath(self, candidate)
         if r.result == "HIT" then
           found = true
           if r.time < bestTime then bestTime = r.time; closest = 0; chosen = candidate end
@@ -751,7 +754,7 @@ function M:decideActionsToAchieveGoal()
     local closest = C.MOVIEWIDTH + C.MOVIEHEIGHT
     local candidate = tank.rot
     for k = 1, 3 do
-      local r = checkBulletPath(self, self.MAXCLOSESTDISTANCE)
+      local r = checkBulletPath(self, candidate)
       if r.result == "HIT" then
         found = true
         if r.time < bestTime then bestTime = r.time; closest = 0; chosen = candidate end

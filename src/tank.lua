@@ -68,6 +68,15 @@ end
 --      mouseTank / settingsUseNewMouseControl / settingsUseSmoothCollision
 --      baseW/baseH/turretW/turretH  可选覆盖
 -- ============================================================
+
+-- 与 SCALE 相关的量（新回合迷宫尺寸变化时需重新同步，见平台层 assignTanksToCells）
+function M.setScale(t, scale)
+  t.cellScale = scale
+  t.s = M.TANK_SCALE * scale / 100          -- localToGlobal 的缩放系数
+  t.forwardSpeed = 4 * (scale / 50)         -- 第 365 行
+  t.backUpSpeed = 2.5 * (scale / 50)        -- 第 366 行
+end
+
 function M.new(opts)
   opts = opts or {}
   local scale = opts.cellScale or 50
@@ -75,10 +84,6 @@ function M.new(opts)
     x = opts.x or 0,
     y = opts.y or 0,
     rot = opts.rot or 0,
-    cellScale = scale,
-    s = M.TANK_SCALE * scale / 100,          -- localToGlobal 的缩放系数
-    forwardSpeed = 4 * (scale / 50),         -- 第 365 行
-    backUpSpeed = 2.5 * (scale / 50),        -- 第 366 行
     turnSpeed = 10,                          -- 第 367 行
     wallHit = opts.wallHit,
     mouseTank = opts.mouseTank or false,
@@ -87,6 +92,7 @@ function M.new(opts)
     hitPoints = M.makeHitPoints(opts.baseW, opts.baseH, opts.turretW, opts.turretH),
     alive = true,
   }
+  M.setScale(t, scale)
   t.oldX, t.oldY, t.oldRot = t.x, t.y, t.rot
   return t
 end
