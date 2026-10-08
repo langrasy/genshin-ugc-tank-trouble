@@ -31,8 +31,7 @@
   "workspace.ignoreDir": [
     ".git",
     "tools",
-    "reference",
-    "游戏截图"
+    "reference"
   ],
   "format.enable": false
 }

@@ -41,6 +41,10 @@ tank_trouble.lua     单文件产物 —— 部署到游戏的就是它
 | `tools/check.cmd` | 语法检查（`luac -p`）+ 静态检查（LuaLS） |
 | `tools/test.cmd` | 运行 `tests/` 下全部单测 |
 | `tools/deploy.cmd` | 打包 → 语法检查 → 复制到映射目录 → 校验 MD5 一致 |
+| `docs/ugc_official/` | 千星奇域官方文档离线归档（知识库 / 教程课程 / 常见问题） |
+| `reference/` | 参考素材（不参与构建，已被 `.gitignore` 忽略） |
+| `reference/tank_trouble2_decompiled/` | 原版 TankTrouble2 Flash 反编译素材（AS2 源码 / 素材 / 解包工具） |
+| `reference/screenshots/` | 编辑器实机截图 |
 | `客户端控件API文档` | 官方控件 / API 文档（Markdown，无扩展名） |
 | `.luarc.json` / `.editorconfig` / `.gitignore` | 检查器、编码换行、忽略规则 |
 

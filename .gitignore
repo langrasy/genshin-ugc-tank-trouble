@@ -8,6 +8,9 @@
 # LuaLS 缓存
 .luarc-cache/
 
-# 参考素材（静态反编译产物 / 截图，体积大且不参与构建）
-genshin_map/
-游戏截图/
+# Python 缓存（文档抓取脚本）
+__pycache__/
+*.pyc
+
+# 参考素材（反编译产物 / 截图 / 解包工具链，体积大且不参与构建）
+reference/
