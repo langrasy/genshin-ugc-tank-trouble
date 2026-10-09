@@ -21,7 +21,7 @@ if errorlevel 1 ( echo [FAIL] 打包失败 & exit /b 1 )
 
 set "RC=0"
 pushd "%ROOT%"
-for %%t in (test_maze test_tank test_round test_platform) do (
+for %%t in (test_maze test_tank test_round test_platform test_net test_audio test_ach test_stats) do (
   echo ============================================================
   echo  %%t
   echo ============================================================

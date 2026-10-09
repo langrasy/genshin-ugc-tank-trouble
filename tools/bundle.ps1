@@ -22,7 +22,11 @@ $modules = @(
     'src.tank',
     'src.weapons',
     'src.ai',
-    'src.round'
+    'src.round',
+    'src.net',
+    'src.audio',
+    'src.ach',
+    'src.stats'
 )
 
 function Read-Source([string]$path) {

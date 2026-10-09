@@ -17,8 +17,8 @@
 
   帧率：原版 Flash 为 25 FPS，逻辑按固定步长 1/25 秒推进（OnLevelUpdate 内累加补步）。
 
-  美术：仅用编辑器自带的「白色方块」「白色圆形」两个模板 + 文本框模板，
-        运行时靠拉伸 / 旋转 / 上色 / 多控件拼接画出全部对象（不依赖任何外部贴图）。
+  美术：仅用编辑器自带的 6 个形状控件模板（正方形 / 圆形 / 三角形 / 四芒星 / 五角星 / 同心圆）
+        + 文本框模板，运行时靠拉伸 / 旋转 / 上色 / 多控件拼接画出全部对象（不依赖任何外部贴图）。
 ]]
 
 local C        = require("src.constants")
@@ -27,6 +27,10 @@ local tankApi  = require("src.tank")
 local weaponsApi = require("src.weapons")
 local aiApi    = require("src.ai")
 local roundApi = require("src.round")
+local netApi   = require("src.net")
+local audioApi = require("src.audio")
+local achApi   = require("src.ach")
+local statsApi = require("src.stats")
 
 local cos, sin, sqrt, abs, floor, min, max, deg =
   math.cos, math.sin, math.sqrt, math.abs, math.floor, math.min, math.max, math.deg
@@ -41,14 +45,32 @@ local toUI
 -- 击杀登记（本地战绩 / 本地成就）；在菜单区定义，此处前向声明供 killTank 调用
 ---@type fun(victim: any, source: any): nil
 local registerKill
+-- 层级重排（自下而上对同级控件 SetAsLastSibling）；
+-- 依赖 G / hud / MENU，故在菜单区定义，此处前向声明供 startNewRound / stepFrame / refreshMenu 调用
+---@type fun(): nil
+local applyZOrder
 
 -- ============================================================
 -- ① 模板 / 参数 / 颜色
 -- ============================================================
 local PREFAB = {
-  SQUARE = 1073741868,   -- 白色方块（Stretch）：墙 / 车体 / 履带 / 炮管 / 补给箱 / 遮罩
-  CIRCLE = 1073741869,   -- 白色圆形（Stretch）：炮塔 / 炮弹 / 地雷 / 导弹头 / 高光
-  TEXT   = 1073741871,   -- 文本框模板
+  TEXT   = 1073741884,   -- 文本框：HUD 文字
+  SQUARE = 1073741886,   -- 正方形（Stretch）：墙 / 地板 / 车体 / 履带 / 炮管 / 补给箱 / 遮罩
+  CIRCLE = 1073741888,   -- 圆形（Stretch）：炮弹 / 炮塔 / 导弹头 / 高光
+  TRI    = 1073741890,   -- 三角形：碎片 / 残骸
+  STAR4  = 1073741892,   -- 四芒星：炮口闪光 / 火花
+  STAR5  = 1073741894,   -- 五角星：爆炸星芒
+  RINGS  = 1073741896,   -- 同心圆：地雷
+}
+
+-- 形状名 → 控件模板索引（部件池按形状名分桶）
+local SHAPE_PREFAB = {
+  square = PREFAB.SQUARE,
+  circle = PREFAB.CIRCLE,
+  tri    = PREFAB.TRI,
+  star4  = PREFAB.STAR4,
+  star5  = PREFAB.STAR5,
+  rings  = PREFAB.RINGS,
 }
 
 local CFG = {
@@ -61,7 +83,10 @@ local CFG = {
   TANK_COUNT = 2,
   PLAYER     = 1,
   WALL_T     = 1 / 8,    -- 墙厚 = SCALE/8（= 2×floor(SCALE/16)，与碰撞一致）
-  CRATE_R    = 0.75,     -- 补给箱世界尺寸 = SCALE*该系数
+  -- 补给箱半边长（单位=格）。原版 Crate 剪辑 20×20 局部单位，生成时 _xscale = SCALE*1.5，
+  -- 显示尺寸 = 20 * SCALE*1.5/100 = 0.3 格；实机截图 8 倍放大实测约 0.32 格。
+  -- 拾取判定用的也是同一半边长（原版 ±10 局部像素 × 1.5*SCALE/100 = 0.15 格）。
+  CRATE_R    = 0.16,     -- 边长 = 2*CRATE_R*SCALE ≈ 0.32 格（≈ 原版 0.3 格）
 }
 
 -- 原版舞台 692×480：迷宫像素即舞台像素。整块舞台等比缩放到 UI 目标区，
@@ -78,20 +103,37 @@ end
 
 local COLOR = {
   SCREEN   = col(20, 22, 28),
-  FLOOR    = col(46, 50, 58),
-  FLOOR_LN = col(56, 60, 70),
-  WALL     = col(126, 136, 150),
-  WALL_TOP = col(170, 179, 190),
-  WALL_DIP = col(78, 85, 96),
+  -- 原版 drawMaze（frame_53 595-664）：地板是舞台底色（近白），墙块填充浅灰 0xE6E6E6，
+  -- 墙内边线用深灰 0x4D4D4D、最外圈纯黑，整体读作「浅地板 + 深墙」。
+  -- 移植版此前正好相反（深地板 + 浅墙），这里按原版关系翻转；
+  -- 顺带让「敌我皆黑」的普通炮弹在浅地板上清晰可见。
+  FLOOR    = col(232, 234, 238),
+  FLOOR_LN = col(216, 219, 224),
+  WALL     = col(112, 118, 128),
+  WALL_TOP = col(150, 157, 168),
+  WALL_DIP = col(72, 77, 86),
   P1       = col(224, 82, 70),
   P2       = col(87, 184, 88),
   P3       = col(86, 140, 224),
   P4       = col(226, 180, 70),
+  -- 莱卡（AI）：原版 p2trac 0x262626（深灰）/ p2turc 0x666666（中灰）。
+  -- 车体色略提亮，避免在深色菜单面板上完全不可辨。
+  AI       = col(60, 62, 68),
   SHOT     = col(255, 214, 140),
+  -- 原版投射物贴图原生色（贴图不与坦克颜色相乘）：
+  -- bullet / electricbullet 5×5 纯黑，gatlingBullet 3×3 纯黑，
+  -- fragbombfragment 3×3 纯黑，homingbullet 8×11 灰白。
+  BULLET   = col(0, 0, 0),
+  HOMING   = col(224, 228, 234),
   TEXT     = col(245, 245, 245),
   OUTLINE  = col(18, 18, 22),
-  CRATE    = col(196, 150, 84),
-  CRATE_B  = col(120, 86, 46),
+  -- 原版补给箱（raw/Crate.swf 矢量剪辑，生成时 gotoAndStop(武器名) 切到逐武器帧）：
+  -- 实机截图 8 倍放大实测 = 中灰方块 + 稍亮内框 + 中央深色武器字形（字形实测 RGB≈(47,47,47)）。
+  -- game_export 里没有任何补给箱位图/精灵，故只能用 7 个图元手绘。
+  CRATE     = col(150, 154, 162),  -- 箱体（中灰）
+  CRATE_IN  = col(232, 234, 238),  -- 内框（亮灰）
+  CRATE_B   = col(48, 50, 56),     -- 武器字形（深色）
+  CRATE_DUST = col(170, 170, 170), -- 落地扬尘（原版 dust 色 0xAAAAAA）
   SMOKE    = col(180, 180, 180),
   FLAME    = col(255, 168, 60),
   -- 菜单
@@ -118,7 +160,7 @@ end
 -- ============================================================
 ---@type ClientUIContainerControl|nil
 local host = nil
-local pool = { square = {}, circle = {} }
+local pool = { square = {}, circle = {}, tri = {}, star4 = {}, star5 = {}, rings = {} }
 
 ---@return ClientUIControl|nil
 local function createControl(prefabIndex)
@@ -132,29 +174,114 @@ local function createControl(prefabIndex)
     ctl:SetAnchorMax(0.5, 0.5)
     ctl:SetPivot(0.5, 0.5)
   end)
+  -- 关键：InstantiateClientUIControl 实例化出的控件 active 默认为 false，
+  -- 此时控件不可见且挂载脚本不运行，SetVisible(true) 也不会让它显示，必须显式激活。
+  pcall(function() ctl:SetActive(true) end)
+  pcall(function() ctl:SetVisible(true) end)
+  -- 形状模板默认 imageType 为 Basic（按原始像素绘制，不随控件尺寸缩放），
+  -- 设为 Stretch 后 SetSizeDelta 才能真正把图形拉伸到目标大小。
+  -- 注意：imageType 是「图片类控件」的字段（API 721），文本框控件没有这个属性；
+  -- 对它赋值会抛错，而这一批设置写在同一处，报错会连带跳过后面所有语句。
+  if prefabIndex ~= PREFAB.TEXT then
+    pcall(function() ctl.imageType = Enum.ImageType.Stretch end)
+  end
   return ctl --[[@as ClientUIControl]]
 end
 
 local function acquire(shape)
   local list = pool[shape]
+  if list == nil then
+    list = {}
+    pool[shape] = list
+  end
   local ctl = table.remove(list)
   if ctl == nil then
-    ctl = createControl(shape == "circle" and PREFAB.CIRCLE or PREFAB.SQUARE)
+    ctl = createControl(SHAPE_PREFAB[shape] or PREFAB.SQUARE)
     if ctl == nil then return nil end
-    pcall(function()
-      ctl.imageType = Enum.ImageType.Stretch
-      ctl:SetVisible(false)
-    end)
   else
-    pcall(function() ctl:SetVisible(true) end)
+    pcall(function() ctl:SetActive(true) end)
   end
+  -- 关键：池中控件可能残留上一次使用时的旋转（折线激光段 / 补给箱旋转动画 / 炮塔……
+  --         都会给"正方形"写角度，而这些角度会被复用到墙上，导致"歪墙 / 不在网格线上的墙"）。
+  --         取出复用时一律清零。
+  pcall(function() ctl:SetLocalRotation(0, 0, 0) end)
+  -- 取出即视为"已使用"：可见；回收（release）时才隐藏
+  pcall(function() ctl:SetVisible(true) end)
   return ctl
 end
 
 local function release(shape, ctl)
   if ctl == nil then return end
+  local list = pool[shape]
+  if list == nil then
+    list = {}
+    pool[shape] = list
+  end
   pcall(function() ctl:SetVisible(false) end)
-  pool[shape][#pool[shape] + 1] = ctl
+  list[#list + 1] = ctl
+end
+
+-- 模板自检：逐个实例化 7 个控件模板并立刻销毁，结果打到正常日志，便于排查"编辑器里没配模板 / 索引写错"
+local function selfCheckPrefabs()
+  local order = { "TEXT", "SQUARE", "CIRCLE", "TRI", "STAR4", "STAR5", "RINGS" }
+  local seg = {}
+  for i = 1, #order do
+    local idx = PREFAB[order[i]]
+    local ok, ctl = pcall(game.InstantiateClientUIControl, idx, host)
+    if ok and ctl ~= nil then
+      seg[#seg + 1] = order[i] .. "=" .. tostring(idx) .. " OK"
+      pcall(function() game.DestroyClientUIControl(ctl) end)
+    else
+      seg[#seg + 1] = order[i] .. "=" .. tostring(idx) .. " FAIL"
+    end
+  end
+  -- 额外探针：确认 TEXT 索引确实指向「文本框」，并把真机实际生效的情况打出来。
+  -- 注意：上一版只在单测桩件上验证过（桩未实现 SetActive / SetAsLastSibling），
+  -- 结论不可信。这里改成「真机自检」：把控件摆到屏幕上方并存活约 1 秒，
+  -- 日志打印每一项的实际读回值，失败点会直接暴露。
+  do
+    local ok, ctl = pcall(game.InstantiateClientUIControl, PREFAB.TEXT, host)
+    if ok and ctl ~= nil then
+      local function try(f)
+        local o, a, b, c, d = pcall(f)
+        if not o then return "<err>" end
+        return a, b, c, d
+      end
+      try(function()
+        ctl:SetAnchorMin(0.5, 0.5); ctl:SetAnchorMax(0.5, 0.5); ctl:SetPivot(0.5, 0.5)
+      end)
+      try(function() ctl:SetActive(true) end)
+      try(function() ctl:SetVisible(true) end)
+      try(function() ctl:SetSizeDelta(864, 102) end)
+      try(function() ctl.adaptiveFontSize = false end)
+      try(function() ctl.fontSize = 36 end)
+      try(function() ctl.text = "自检文本 OK" end)
+      try(function() ctl.fontColor = COLOR.TEXT end)
+      try(function() ctl.enableOutline = false end)
+      try(function() ctl:SetAnchoredPosition(0, 300) end)
+
+      local pp = tostring(try(function() return ctl.prefabIndex end))
+      local gsx, gsy = try(function() return ctl:GetSizeDelta() end)
+      local fsz = tostring(try(function() return ctl.fontSize end))
+      local back = tostring(try(function() return ctl.text end))
+      local ai = tostring(try(function() return ctl.activeInHierarchy end))
+      local vis = tostring(try(function() return ctl.visible end))
+      local fcr, fcg, fcb, fca = try(function() return Color.ToRGBA(ctl.fontColor) end)
+      seg[#seg + 1] = "TEXT探针 prefab=" .. pp
+        .. " size读回=" .. tostring(gsx) .. "x" .. tostring(gsy)
+        .. " fontSize=" .. fsz .. " text读回=" .. back
+        .. " activeInHierarchy=" .. ai .. " visible=" .. vis
+        .. " fontColor=" .. tostring(fcr) .. "," .. tostring(fcg) .. ","
+        .. tostring(fcb) .. "," .. tostring(fca)
+      -- 不立刻销毁：存活约 1 秒（见 OnLevelUpdate），供肉眼确认「文本框到底能不能显示」。
+      -- 在 OnStart 末尾会被抬到最上层，避免被后建的菜单面板压住。
+      G.textProbe = ctl
+      G.textProbeTtl = 1.0
+    else
+      seg[#seg + 1] = "TEXT探针 实例化失败"
+    end
+  end
+  print("[坦克动荡] 模板自检：" .. table.concat(seg, " | "))
 end
 
 -- 部件：局部偏移(lx,ly) 已换算为世界像素；尺寸(w,h) 已换算为世界像素
@@ -205,12 +332,19 @@ G = {
   shakeX = 0, shakeY = 0,
   fieldCache = {}, distProxy = nil,
   playerIndex = CFG.PLAYER,
+  -- 菜单导航输入（W/S/A/D + 方向键 + 确认键）
   input = { fwd = false, back = false, left = false, right = false, fire = false },
+  -- 各控制方案（1=红/1P，2=绿/2P）的坦克输入。见 SCHEME_KEY。
+  pinputs = {
+    { fwd = false, back = false, left = false, right = false, fire = false },
+    { fwd = false, back = false, left = false, right = false, fire = false },
+  },
+  mode = "solo",   -- solo | duo
   accum = 0, running = false,
   -- 本地战绩（原版为上传到 pixvi.net 的统计，此处只本地累计）
-  stats = { kills = 0, deaths = 0, victories = 0, rounds = 0, selfKills = 0 },
+  stats = statsApi.new(),
   -- 本地成就（原版通过 achievement.php 上报，此处只本地记录）
-  ach = { unlocked = {}, consecutive = 0 },
+  ach = achApi.new(),
 }
 
 -- ============================================================
@@ -379,6 +513,7 @@ local TURRET_DIMS = {
 }
 
 local function buildBaseArt(t)
+  vfree(t.baseArt)   -- 重建前先归还旧部件，避免控件泄漏留在场上
   local parts = {}
   local s = t.s
   for i = 1, #TANK_BASE_ART do
@@ -450,22 +585,28 @@ end
 local function buildProjVisual(p)
   local k = G.scale / 50
   local parts = {}
-  local c = p.color or COLOR.SHOT
+  local c = p.color or COLOR.SHOT   -- 仅激光 / 死亡射线 / 地雷等有色武器使用
+  -- 绘制尺寸 = 贴图原生像素 × (SCALE/50)，与原版一致（此前用了近两倍的尺寸，显得过大）。
   if p.kind == "bullet" or p.kind == "electric" then
-    parts[#parts + 1] = vpart("circle", 10 * k, 10 * k, c, 0, 0, 0)
-    parts[#parts + 1] = vpart("circle", 4 * k, 4 * k, shade(c, 1.5), 0, 0, 0)
+    -- 原版 bullet / electricbullet 贴图 5×5 纯黑（与 owner 颜色无关）
+    parts[#parts + 1] = vpart("circle", 5 * k, 5 * k, COLOR.BULLET, 0, 0, 0)
   elseif p.kind == "gatlingBullet" then
-    parts[#parts + 1] = vpart("circle", 8 * k, 8 * k, c, 0, 0, 0)
+    -- 原版 gatlingBullet 贴图 3×3 纯黑
+    parts[#parts + 1] = vpart("circle", 3 * k, 3 * k, COLOR.BULLET, 0, 0, 0)
+  elseif p.kind == "frag" then
+    -- 原版 fragbomb 贴图 7×7 纯黑圆弹（与破片 fragment 是不同贴图）
+    parts[#parts + 1] = vpart("circle", 7 * k, 7 * k, COLOR.BULLET, 0, 0, 0)
   elseif p.kind == "fragment" then
-    parts[#parts + 1] = vpart("square", 5 * k, 5 * k, c, 0, 0, 0)
+    -- 原版 fragbombfragment 贴图 3×3 纯黑（略放大到 4 以免亚像素完全看不见）
+    parts[#parts + 1] = vpart("tri", 4 * k, 4 * k, COLOR.BULLET, 0, 0, 0)
   elseif p.kind == "homing" or p.kind == "remote" then
-    parts[#parts + 1] = vpart("square", 9 * k, 22 * k, c, 0, 0, 0)
-    parts[#parts + 1] = vpart("circle", 10 * k, 10 * k, shade(c, 1.25), 0, -12 * k, 0)
-    parts[#parts + 1] = vpart("square", 16 * k, 4 * k, shade(c, 0.7), 0, 11 * k, 0)
+    -- 原版 homingbullet 贴图 8×11 灰白（不与坦克颜色相乘）
+    parts[#parts + 1] = vpart("square", 8 * k, 11 * k, COLOR.HOMING, 0, 0, 0)
+    parts[#parts + 1] = vpart("circle", 6 * k, 6 * k, shade(COLOR.HOMING, 0.72), 0, -7 * k, 0)
+    parts[#parts + 1] = vpart("square", 6 * k, 3 * k, shade(COLOR.HOMING, 0.6), 0, 8 * k, 0)
   elseif p.kind == "mine" then
     local d = 50 * (p.scaleFactor or 0.2)
-    parts[#parts + 1] = vpart("circle", d, d, c, 0, 0, 0)
-    parts[#parts + 1] = vpart("circle", d * 0.5, d * 0.5, shade(c, 0.6), 0, 0, 0)
+    parts[#parts + 1] = vpart("rings", d, d, c, 0, 0, 0)
   end
   p.vis = parts
 end
@@ -560,12 +701,21 @@ end
 -- ============================================================
 -- ⑧ 特效（烟雾 / 碎片 / 闪光）
 -- ============================================================
+-- 效果种类 → 部件形状
+local EFFECT_SHAPE = {
+  smoke = "circle",   -- 烟
+  frag  = "tri",      -- 碎片 / 残骸
+  flash = "star4",    -- 炮口闪光 / 火花
+  burst = "star5",    -- 爆炸星芒
+}
+
 local function spawnEffect(kind, x, y, color, size, life, vx, vy)
   local e = {
     kind = kind, x = x, y = y, vx = vx or 0, vy = vy or 0,
     life = life, lifeMax = life, color = color, size = size, rot = 0,
+    spin = (kind == "frag" or kind == "burst") and (math.random() * 24 - 12) or 0,
   }
-  e.vis = { vpart(kind == "smoke" and "circle" or "square", size, size, color, 0, 0, 0) }
+  e.vis = { vpart(EFFECT_SHAPE[kind] or "square", size, size, color, 0, 0, 0) }
   G.effects[#G.effects + 1] = e
   return e
 end
@@ -584,12 +734,14 @@ local function stepEffects()
     else
       e.x = e.x + e.vx
       e.y = e.y + e.vy
+      e.rot = e.rot + e.spin
       local a = floor(255 * (e.life / e.lifeMax))
       local p = e.vis[1]
       if p ~= nil then
         p.ctl.imageColor = alphaOf(e.color, a)
         local ux, uy = toUI(e.x, e.y)
         p.ctl:SetAnchoredPosition(ux, uy)
+        p.ctl:SetLocalRotation(0, 0, e.rot)
       end
     end
   end
@@ -671,6 +823,7 @@ local function makeCtx()
     spawn = function(p)
       G.projectiles[#G.projectiles + 1] = p
       buildProjVisual(p)
+      muzzleFlash(p)
     end,
     onHit = function(owner, victim) onHit(owner, victim) end,
     setWeapon = function(owner, w) setWeapon(owner, w) end,
@@ -704,6 +857,17 @@ end
 -- ============================================================
 -- ⑩ 视觉回调实现
 -- ============================================================
+-- 炮口闪光：仅在实弹类投射物出生瞬间出现一帧四芒星
+local MUZZLE_KINDS = {
+  bullet = true, gatlingBullet = true, frag = true,
+  homing = true, remote = true,
+}
+function muzzleFlash(p)
+  if p == nil or not MUZZLE_KINDS[p.kind] then return end
+  local k = G.scale / 50
+  spawnEffect("flash", p.x, p.y, COLOR.FLAME, (11 + math.random() * 4) * k, 4, 0, 0)
+end
+
 function visualSmoke(kind, p, n)
   local k = G.scale / 50
   for _ = 1, n do
@@ -721,7 +885,7 @@ function visualFragments(p, n)
     local ang = math.random() * 2 * PI
     local sp = (1.5 + math.random() * 2) * k
     spawnEffect("frag", p.x, p.y, shade(p.color or COLOR.SHOT, 0.8),
-      5 * k, 10 + floor(math.random() * 8), cos(ang) * sp, sin(ang) * sp)
+      8 * k, 10 + floor(math.random() * 8), cos(ang) * sp, sin(ang) * sp)
   end
 end
 
@@ -740,10 +904,56 @@ function visualSpark(p1, p2)
   G.sparkLife = 2
 end
 
-local SOUND_IDS = {}   -- 音效 ID 由编辑器配置，这里按名称占位（未配置则静默）
+-- ============================================================
+-- ⑪.5 外围系统接入：本地音频 / 服务器信号 / 成就上报
+-- ============================================================
+-- 音效 ID 表：键名为音效名，值为编辑器里配置的音频 ID（未配置则静默）。
+-- 需与 src/audio.lua 使用同一套名称；例：SOUND_IDS = { fire = 1001, explode = 1002 }
+local SOUND_IDS = {}
+local audioClock = 0   -- 秒，由 OnLevelUpdate 推进，供 audio 模块做同类音效最小间隔
+
+-- 绑定音频后端：真机走 game.PlayAudio2D / game.StopAudio；未配置音频 ID 时全程静默
+local function bindAudioBackend()
+  audioApi.bind({
+    now    = function() return audioClock end,
+    play2d = function(id) return game.PlayAudio2D(id) end,
+    stop   = function(h) pcall(game.StopAudio, h) end,
+  })
+  for name, id in pairs(SOUND_IDS) do audioApi.register(name, id) end
+end
+
 function playSound(name)
-  local id = SOUND_IDS[name]
-  if id ~= nil then pcall(game.PlayAudio2D, id) end
+  audioApi.playSfx(name)
+end
+
+-- 绑定服务器信号：客户端 → 服务器上报；单机（无联机服务器）时 SendSignal 无效但安全
+local function bindNet()
+  netApi.bind({
+    -- 防御：单机 / 单测环境可能没有 ServerSignal，返回 nil 让 emit 安全失败
+    server = function(name)
+      if game.ServerSignal == nil then return nil end
+      return game.ServerSignal(name)
+    end,
+  })
+  -- 服务器 → 客户端：排行榜名次 / 段位等下发，本地单机不会触发
+  pcall(function()
+    script:RegisterServerSignalHandler(netApi.SIG.MATCH, function(sig, params)
+      local n = 0
+      if params ~= nil then n = #params end
+      print("[坦克动荡] 收到服务器信号 " .. tostring(sig) .. "，参数数=" .. tostring(n))
+    end)
+  end)
+end
+
+-- 新解锁成就 → 逐个上报（原版 unlockAchievement 的本地等价）
+local function reportNewAch(ids)
+  if ids == nil then return end
+  for i = 1, #ids do netApi.reportAchievement(ids[i]) end
+end
+
+-- 回合战绩 → 上报（原版 unsentRoundsCompleted 等字段的本地等价）
+local function reportStats()
+  netApi.reportRound(statsApi.payload(G.stats))
 end
 
 -- ============================================================
@@ -770,11 +980,13 @@ function killTank(victim, source)
   victim.turretArt = nil
   -- 爆炸特效
   local k = G.scale / 50
+  -- 中心星芒（五角星），随生命衰减放大
+  spawnEffect("burst", victim.x, victim.y, shade(COLOR.FLAME, 1.15), 34 * k, 12, 0, 0)
   for _ = 1, 14 do
     local ang = math.random() * 2 * PI
     local sp = (1 + math.random() * 3) * k
     spawnEffect("frag", victim.x, victim.y, shade(victim.baseColor, 1.1),
-      6 * k, 12 + floor(math.random() * 10), cos(ang) * sp, sin(ang) * sp)
+      8 * k, 12 + floor(math.random() * 10), cos(ang) * sp, sin(ang) * sp)
   end
   for _ = 1, 8 do
     spawnEffect("smoke", victim.x, victim.y, COLOR.SMOKE,
@@ -807,6 +1019,54 @@ local function clearEffects()
   G.effects = {}
 end
 
+-- 逐武器字形（原版补给箱每个武器一帧，字形各不相同）。
+-- 每项 = { 控件形状, 宽, 高, 局部旋转 }，宽高是「字形基准框 gb」的倍数。
+local CRATE_GLYPH = {
+  laser    = { { "tri",    1.0, 1.0, 0 } },              -- 三角
+  frag     = { { "circle", 1.0, 1.0, 0 } },              -- 实心圆
+  gatling  = { { "star4",  1.0, 1.0, 0 } },              -- 四芒星
+  homing   = { { "star5",  1.0, 1.0, 0 } },              -- 五角星
+  deathRay = { { "rings",  1.0, 1.0, 0 } },              -- 同心圆
+  mine     = { { "square", 0.9, 0.9, 45 } },             -- 菱形（箱体是正的，菱形一眼可辨）
+  remote   = { { "square", 1.0, 0.32, 0 },               -- 十字
+               { "square", 0.32, 1.0, 0 } },
+}
+
+-- 建一套补给箱图元：中灰箱体 + 亮灰内框 + 深色武器字形。
+-- r = 半边长（世界像素）。每个部件记下基准尺寸 bw/bh，供弹入缩放动画逐帧重设。
+local function buildCrateVisual(weapon, r)
+  local specs = {
+    { "square", r * 2.0, r * 2.0, COLOR.CRATE,    0 },
+    { "square", r * 1.6, r * 1.6, COLOR.CRATE_IN, 0 },
+  }
+  local gb = r * 1.1   -- 字形基准框（约箱子边长的 55%，与实机截图字形占比一致）
+  local glyph = CRATE_GLYPH[weapon] or { { "square", 1.0, 1.0, 0 } }
+  for i = 1, #glyph do
+    local it = glyph[i]
+    specs[#specs + 1] = { it[1], gb * it[2], gb * it[3], COLOR.CRATE_B, it[4] or 0 }
+  end
+  local vis = {}
+  for i = 1, #specs do
+    local s = specs[i]
+    local p = vpart(s[1], s[2], s[3], s[4], 0, 0, s[5])
+    if p ~= nil then
+      p.bw, p.bh = s[2], s[3]
+      vis[#vis + 1] = p
+    end
+  end
+  return vis
+end
+
+-- 生成时的扬尘（原版 spawnCrate 尾部的 puff clouds）
+local function cratePuff(x, y, n)
+  local k = G.scale / 50
+  for _ = 1, n do
+    spawnEffect("smoke", x, y, alphaOf(COLOR.CRATE_DUST, 200),
+      (8 + math.random() * 6) * k, 10,
+      (math.random() * 2 - 1) * k, (math.random() * 2 - 1) * k)
+  end
+end
+
 local function trySpawnCrate()
   local pos = roundApi.pickCratePos(ctx)
   if pos == nil then return end
@@ -816,29 +1076,35 @@ local function trySpawnCrate()
   local weapon = roundApi.pickCrateWeapon(C.SETTINGS.activeWeapons)
   if weapon == nil then cell.used = false; return end
   local s = G.scale
+  -- 弹入参数取自原版 spawnCrate：targetScale = SCALE*1.5、_rotation = rot(随机)、
+  -- scaleSpeed = SCALE/5、scaleSpeedDiff = SCALE/20（src/round.lua M.crateLanding）。
+  local land = roundApi.crateLanding(s)
   local crate = {
     x = (cell.x + 0.5) * s, y = (cell.y + 0.5) * s,
     weapon = weapon, cell = cell,
-    anim = 0,
+    rot = land.rot,                                  -- 原版 _rotation
+    -- 缩放进度 k = 当前 _xscale / targetScale：0 → 1，中途过冲到约 1.33 再回弹 snap
+    k = 0,
+    kSpeed = land.scaleSpeed / land.targetScale,      -- = 2/15 ≈ 0.1333 每帧
+    kDiff = land.scaleSpeedDiff / land.targetScale,   -- = 1/30 ≈ 0.0333 每帧
+    landed = false,
   }
-  local r = s * CFG.CRATE_R
-  crate.vis = {
-    vpart("square", r * 2, r * 2, COLOR.CRATE, 0, 0, 0),
-    vpart("square", r * 0.28, r * 2, COLOR.CRATE_B, 0, 0, 0),
-    vpart("square", r * 2, r * 0.28, COLOR.CRATE_B, 0, 0, 0),
-    vpart("circle", r * 0.7, r * 0.7, shade(COLOR.CRATE, 1.3), 0, 0, 0),
-  }
+  crate.vis = buildCrateVisual(weapon, s * CFG.CRATE_R)
   G.crates[#G.crates + 1] = crate
+  cratePuff(crate.x, crate.y, 3)
 end
 
 local function syncCrates()
   for i = #G.crates, 1, -1 do
     local c = G.crates[i]
-    -- 拾取判定
+    -- 拾取判定（原版 Crate/DefineSprite_13_crate/frame_1）：
+    -- 箱子局部 ±10 像素的四角经 _xscale = targetScale/100 变换到舞台 ⇒ ±0.15*SCALE，
+    -- 与 SCALE 成比例（不是固定 10 像素），且要求该坦克 currentWeapon == "bullet"
+    -- （后半条已由 src/round.lua M.tryPickup 保证）。
     local picked = roundApi.tryPickup(c, G.tanks, {
       boxContains = function(t, px, py) return ctx.tankBBoxContains(t, px, py) end,
       corners = function(t, cr)
-        local r = G.scale * CFG.CRATE_R * 0.8
+        local r = G.scale * 0.15
         return { { cr.x - r, cr.y - r }, { cr.x + r, cr.y - r },
                  { cr.x - r, cr.y + r }, { cr.x + r, cr.y + r } }
       end,
@@ -849,14 +1115,23 @@ local function syncCrates()
       vfree(c.vis)
       table.remove(G.crates, i)
     else
-      if c.anim < 1 then c.anim = min(1, c.anim + 0.15) end
-      local sc = 0.4 + 0.6 * c.anim
+      -- 弹入动画（原版：_xscale 每帧 +scaleSpeed，越过 targetScale 后减去 scaleSpeedDiff 回弹，
+      -- 再降到 targetScale 以下时 snap 到 targetScale 并喷落地扬尘；无「旋转归位」动画）。
+      if not c.landed then
+        c.k = c.k + c.kSpeed
+        if c.k > 1 then c.kSpeed = c.kSpeed - c.kDiff end
+        if c.k < 1 and c.kSpeed < 0 then
+          c.k, c.kSpeed, c.landed = 1, 0, true
+          cratePuff(c.x, c.y, 3)
+        end
+      end
+      local vs = G.VS
       local ux, uy = toUI(c.x, c.y)
       for j = 1, #c.vis do
         local p = c.vis[j]
+        p.ctl:SetSizeDelta(p.bw * c.k * vs, p.bh * c.k * vs)
         p.ctl:SetAnchoredPosition(ux, uy)
-        p.ctl:SetLocalRotation(0, 0, -(1 - c.anim) * 120)
-        p.ctl:SetSizeDelta(p.ctl.sizeDeltaX or 0, p.ctl.sizeDeltaY or 0)
+        p.ctl:SetLocalRotation(0, 0, -(c.rot + p.lrot))
       end
     end
   end
@@ -964,6 +1239,8 @@ local function startNewRound()
     if t.ai ~= nil then t.ai = aiApi.new(t, ctx) end
   end
   updateScoreHUD()
+  -- 本回合新建的地板 / 墙晚于坦克创建，会把坦克压住；重排一次固定叠放
+  applyZOrder()
   print("[坦克动荡] 新回合：迷宫 " .. W .. "×" .. H .. "，SCALE=" .. G.scale
         .. "，可达格=" .. #reachable)
 end
@@ -976,12 +1253,14 @@ local function tankFrame(t)
   if weaponsApi.lockedControl(t, t.currentWeapon) then return end
 
   local fire
-  if t.isPlayer then
-    t.forward = G.input.fwd
-    t.backup = G.input.back
-    t.turnLeft = G.input.left
-    t.turnRight = G.input.right
-    fire = G.input.fire
+  if t.controlIndex ~= nil then
+    -- 人类玩家：按自己的控制方案取输入（红=1，绿=2）
+    local inp = G.pinputs[t.controlIndex] or G.input
+    t.forward = inp.fwd
+    t.backup = inp.back
+    t.turnLeft = inp.left
+    t.turnRight = inp.right
+    fire = inp.fire
   else
     local ai = t.ai
     if ai ~= nil then
@@ -1045,8 +1324,18 @@ local function stepFrame()
     roundApi.assignPoints(G.tanks)
     -- 本地战绩：回合完成数 / 玩家存活获胜数（原版为 unsentRoundsCompleted 等上传字段）
     local pl = G.tanks[G.playerIndex]
-    G.stats.rounds = G.stats.rounds + 1
-    if pl ~= nil and pl.alive then G.stats.victories = G.stats.victories + 1 end
+    local won = (pl ~= nil and pl.alive)
+    statsApi.onRound(G.stats, won)
+    local newly = achApi.apply(G.ach, { type = "round" })
+    if won then
+      local w = achApi.apply(G.ach, { type = "win" })
+      if w ~= nil then
+        newly = newly or {}
+        for i = 1, #w do newly[#newly + 1] = w[i] end
+      end
+    end
+    reportNewAch(newly)
+    reportStats()
     clearProjectiles()
     clearCrates()
     updateScoreHUD()
@@ -1076,6 +1365,8 @@ local function stepFrame()
 
   syncWalls()
   renderTanks()
+  -- 对局中会不断新建炮弹 / 补给箱 / 特效，每帧末重排一次，保证坦克永远在最上层
+  applyZOrder()
 end
 
 -- ============================================================
@@ -1083,19 +1374,41 @@ end
 -- ============================================================
 local hud = {}
 
+-- 文本框属性逐项设置：每条属性单独一个 pcall。
+-- 原先所有赋值写在同一个 pcall 里，任何一条抛错（当前引擎不认识的枚举、
+-- 或对文本框不适用的调用）都会连带跳过后面的语句 —— 包括最关键的
+-- ctl.text = ...，结果就是「有框但没字」。现在先写文字，再写排版，
+-- 后写的失败也不会影响已经写进去的文字。
+--
+-- 字体与字号策略（本轮修正，针对「菜单/HUD 文字不显示」）：
+--   ① 文字第一条写入（保持不变）；
+--   ② 关闭字号自适应（adaptiveFontSize=false），直接用固定 fontSize。
+--      自适应字号会依据「当时的控件尺寸」估算，而尺寸在本函数之后才设置，
+--      存在被估算成极小值（甚至被 minimumFontSize 兜底到 14 后仍不显示）的风险。
+--   ③ 关闭描边（enableOutline=false）。描边依赖模板材质，若模板未配描边材质，
+--      开启后可能整段文字不渲染。先关掉以排除这条路径，确认能显示后再考虑恢复。
+local function styleText(ctl, text, size, align)
+  pcall(function() ctl.text = text end)
+  pcall(function() ctl.adaptiveFontSize = false end)
+  pcall(function() ctl.fontSize = size end)
+  pcall(function() ctl.minimumFontSize = max(size, 16) end)
+  pcall(function() ctl.fontColor = COLOR.TEXT end)
+  -- 官方文档：文本框背景「支持配置透明、黑色半透明底色」；显式置为全透明
+  pcall(function() ctl.bgColor = Color.FromRGBA(0, 0, 0, 0) end)
+  pcall(function() ctl.enableOutline = false end)
+  pcall(function() ctl.horizontalAlignment = align or Enum.TextHorizontalAlignment.Middle end)
+  pcall(function() ctl.verticalAlignment = Enum.TextVerticalAlignment.Middle end)
+end
+
 local function makeText(y, size, text)
   local ctl = createControl(PREFAB.TEXT)
   if ctl == nil then return nil end
-  pcall(function()
-    ctl:SetSizeDelta(600, size * 2)
-    ctl:SetAnchoredPosition(0, y)
-    ctl.text = text
-    ctl.fontSize = size
-    ctl.fontColor = COLOR.TEXT
-    ctl.enableOutline = true
-    ctl.outlineColor = COLOR.OUTLINE
-    ctl.horizontalAlignment = Enum.TextHorizontalAlignment.Middle
-  end)
+  -- 先定尺寸、再写属性：字号自适应若（被模板默认值）打开，会按「当前尺寸」估算，
+  -- 因此必须在设置字号之前就把最终尺寸给足。
+  -- 尺寸给足：官方建议文本框长度远大于实际文本宽度；高度取 3 倍字号留出余量
+  pcall(function() ctl:SetSizeDelta(864, size * 3) end)
+  styleText(ctl, text, size, nil)
+  pcall(function() ctl:SetAnchoredPosition(0, y) end)
   return ctl
 end
 
@@ -1105,7 +1418,9 @@ function updateScoreHUD()
     local b = G.tanks[2]
     local sa = a and a.score or 0
     local sb = b and b.score or 0
-    pcall(function() hud.score.text = "红 " .. sa .. "   :   " .. sb .. " 绿" end)
+    -- solo：红 vs 莱卡（深灰）；duo：红 vs 绿
+    local nb = (G.mode == "duo") and "绿" or "莱卡"
+    pcall(function() hud.score.text = "红 " .. sa .. "   :   " .. sb .. " " .. nb end)
   end
 end
 
@@ -1131,7 +1446,7 @@ local function setupHUD()
   hud.score = makeText(stageY(STAGE_H - 32), 34, "红 0   :   0 绿")
   -- 武器与操作提示放在舞台上方，避免压住迷宫
   hud.weapon = makeText(stageY(-52), 22, "武器：普通炮弹")
-  hud.hint = makeText(stageY(-20), 20, "WASD / 方向键 移动    Q / 空格 开火")
+  hud.hint = makeText(stageY(-20), 20, "红方 S/E/F/D 移动 · Q 开火    设置：R")
 end
 
 -- ============================================================
@@ -1155,42 +1470,82 @@ local function bindKey(name, cb, tag)
   return ok
 end
 
-local function setInput(key, v)
-  return function() G.input[key] = v; return true end
-end
+-- 原版三套操控（frame_58 setupControls / constants.CONTROL_SCHEMES）对应的平台按键事件名。
+--   方案 0（原版键码 83/69/70/68/81 = S/E/F/D + Q）：红方 / 1P。
+--   方案 1（原版键码 37/38/39/40/77 = ←↑→↓ + M）：绿方 / 2P。
+-- 平台 Enum.KeyboardKeyCode 表无字母 M（见《客户端控件API文档》），改用「.」(CraftspersonKey34) 替代。
+local SCHEME_KEY = {
+  [1] = {
+    left = "KeyboardMoveBackwardKey",      -- S
+    fwd  = "KeyboardCharacterSkill1Key",   -- E
+    right = "KeyboardInteractKey",         -- F
+    back = "KeyboardMoveRightKey",         -- D
+    fire = "KeyboardCharacterSkill2Key",   -- Q
+    fireLabel = "Q", hint = "S/E/F/D 移动 · Q 开火",
+  },
+  [2] = {
+    left = "KeyboardCraftspersonKey38",    -- ←
+    fwd  = "KeyboardCraftspersonKey36",    -- ↑
+    right = "KeyboardCraftspersonKey39",   -- →
+    back = "KeyboardCraftspersonKey37",    -- ↓
+    fire = "KeyboardCraftspersonKey34",    -- .（替代原版 M）
+    fireLabel = ".", hint = "方向键移动 · . 开火",
+  },
+}
 
 local function setupInput()
-  local binds = {
-    { "KeyboardMoveForwardKeyDown",  "KeyboardMoveForwardKeyUp",  "fwd" },
-    { "KeyboardMoveBackwardKeyDown", "KeyboardMoveBackwardKeyUp", "back" },
-    { "KeyboardMoveLeftKeyDown",     "KeyboardMoveLeftKeyUp",     "left" },
-    { "KeyboardMoveRightKeyDown",    "KeyboardMoveRightKeyUp",    "right" },
-    { "KeyboardCraftspersonKey36Down", "KeyboardCraftspersonKey36Up", "fwd" },
-    { "KeyboardCraftspersonKey37Down", "KeyboardCraftspersonKey37Up", "back" },
-    { "KeyboardCraftspersonKey38Down", "KeyboardCraftspersonKey38Up", "left" },
-    { "KeyboardCraftspersonKey39Down", "KeyboardCraftspersonKey39Up", "right" },
-  }
-  for i = 1, #binds do
-    local b = binds[i]
-    bindKey(b[1], setInput(b[3], true), b[3])
-    bindKey(b[2], setInput(b[3], false), b[3])
+  -- 同一事件名可能同时驱动菜单与某号玩家的坦克（如 S 既是菜单「下移」又是红方左转），
+  -- 因此必须把动作合并成「每个事件名只注册一次监听」，否则后注册者会覆盖前者。
+  local reg = {}
+  local function add(ev, isDown, fn)
+    local r = reg[ev]
+    if r == nil then r = { down = {}, up = {} }; reg[ev] = r end
+    if isDown then r.down[#r.down + 1] = fn else r.up[#r.up + 1] = fn end
+  end
+  local function menuBind(ev, key)
+    add(ev, true,  function() G.input[key] = true end)
+    add(ev, false, function() G.input[key] = false end)
+  end
+  local function tankBind(ev, p, key)
+    add(ev, true,  function() local pi = G.pinputs[p]; if pi ~= nil then pi[key] = true end end)
+    add(ev, false, function() local pi = G.pinputs[p]; if pi ~= nil then pi[key] = false end end)
   end
 
-  local fireDown = { "KeyboardCharacterSkill2KeyDown", "KeyboardNormalAttackKeyDown",
-                     "KeyboardJumpKeyDown" }
-  local fireUp = { "KeyboardCharacterSkill2KeyUp", "KeyboardNormalAttackKeyUp",
-                   "KeyboardJumpKeyUp" }
-  local ok = false
-  for i = 1, #fireDown do
-    if eventType(fireDown[i]) ~= nil then
-      ok = bindKey(fireDown[i], setInput("fire", true), "开火")
-      if ok and eventType(fireUp[i]) ~= nil then
-        bindKey(fireUp[i], setInput("fire", false), "开火抬起")
-      end
-      if ok then break end
+  -- 菜单导航：W/S/A/D + 方向键
+  menuBind("KeyboardMoveForwardKey",    "fwd")
+  menuBind("KeyboardMoveBackwardKey",   "back")
+  menuBind("KeyboardMoveLeftKey",       "left")
+  menuBind("KeyboardMoveRightKey",      "right")
+  menuBind("KeyboardCraftspersonKey36", "fwd")
+  menuBind("KeyboardCraftspersonKey37", "back")
+  menuBind("KeyboardCraftspersonKey38", "left")
+  menuBind("KeyboardCraftspersonKey39", "right")
+  -- 菜单确认：Q（红方开火键）/ 空格 / 鼠标左键
+  menuBind("KeyboardCharacterSkill2Key", "fire")
+  menuBind("KeyboardJumpKey",            "fire")
+  menuBind("KeyboardNormalAttackKey",    "fire")
+
+  -- 玩家坦克：按控制方案绑定（方案号与玩家号 1:1）
+  for scheme = 1, #SCHEME_KEY do
+    local sk = SCHEME_KEY[scheme]
+    tankBind(sk.left,  scheme, "left")
+    tankBind(sk.fwd,   scheme, "fwd")
+    tankBind(sk.right, scheme, "right")
+    tankBind(sk.back,  scheme, "back")
+    tankBind(sk.fire,  scheme, "fire")
+  end
+
+  local okAny = false
+  for ev, r in pairs(reg) do
+    if eventType(ev .. "Down") ~= nil then
+      okAny = true
+      bindKey(ev .. "Down", function() for i = 1, #r.down do r.down[i]() end; return true end, ev)
+      bindKey(ev .. "Up",   function() for i = 1, #r.up   do r.up[i]()   end; return true end, ev)
+    else
+      print("[坦克动荡] 运行时无此按键事件：" .. ev .. "（输入）")
     end
   end
-  if not ok then print("[坦克动荡] 未找到可用开火键，请检查 Enum.KeyEventType") end
+  if not okAny then print("[坦克动荡] 未找到可用按键，请检查 Enum.KeyEventType") end
 end
 
 -- ============================================================
@@ -1204,7 +1559,7 @@ end
 --   以上三处均在界面与「关于」页明确标注，不做静默替代。
 -- ============================================================
 local MENU = {
-  phase = "menu",           -- menu | settings | about | playing
+  phase = "menu",           -- menu | ready | countdown | settings | about | playing
   lastPhase = nil,          -- 用于切页时清空输入边沿缓存
   back = "menu",            -- 从设置 / 关于返回的目标页
   sel = 1,                  -- 主菜单选中项
@@ -1213,9 +1568,29 @@ local MENU = {
   panel = nil, hl = nil,
   menuTexts = {}, setTexts = {}, setLabels = {}, setValues = {},
   aboutTexts = {}, achTexts = {}, aboutStats = nil, aboutAch = nil,
+  -- 准备页（原版 controls1Player / controls2Player / controls3Player / mode2）
+  mode = "solo",            -- 本次对局的模式
+  joined = {},              -- [n] = 该参战位是否已加入
+  joinPrev = {},            -- [scheme] = 上一帧的开火状态（边沿检测）
+  cdTick = 0, cdTimer = 0,  -- 倒计时：每 0.5s 一格，0→3、1→2、2→1、3→GO!
+  readyTexts = {},          -- {1=标题, 2=副标题, 3=底部提示, 4=倒计时数字}
+  readyRows = {},           -- { {swatch=, name=, act=}, ... }
 }
 
-local MENU_ITEMS = { "开始游戏", "设置", "关于 / 说明" }
+local MENU_ITEMS = { "单人游戏（VS 莱卡）", "双人游戏", "设置", "关于 / 说明" }
+
+-- 各模式参战位。scheme = 控制方案号（见 SCHEME_KEY），ai = 电脑接管。
+-- 对应原版：frame_7（单人 = 红 vs 莱卡）、frame_19（双人 = 红 + 绿）。
+local MODE_SLOTS = {
+  solo = {
+    { name = "玩家 1（红）", scheme = 1, color = COLOR.P1, ai = false },
+    { name = "莱卡（电脑）",  scheme = nil, color = COLOR.AI, ai = true },
+  },
+  duo = {
+    { name = "玩家 1（红）", scheme = 1, color = COLOR.P1, ai = false },
+    { name = "玩家 2（绿）", scheme = 2, color = COLOR.P2, ai = false },
+  },
+}
 
 -- 设置页行：迷宫来源 3 项 + 武器池 7 项 + 平滑碰撞，对应原版 settingsPanel 的滑块
 local SET_ROWS = {
@@ -1240,7 +1615,8 @@ local ABOUT_LINES = {
   "· 原版「联机对战」依赖外部服务器，此处改为本地单人对战 AI。",
   "· 原版「成就与统计上传」依赖 pixvi.net，此处改为本地记录，不联网、不上传。",
   "· 原版「我的 / 他人自定义迷宫」依赖外部数据源，本地暂无，仅随机迷宫生效。",
-  "【操作】WASD / 方向键 移动    空格 / Q / 左键 开火    R 设置",
+  "【操作】红方（1P）：S/E/F/D 移动 · Q 开火；绿方（2P）：方向键移动 · . 开火；设置：R",
+  "【准备流程】选模式 → 每位玩家按自己的开火键加入 → 3-2-1-GO 开始",
 }
 
 -- 本地成就（对应原版 28 / 35 / 34 / 36；其余为联机或鼠标操控专属，本地不适用）
@@ -1254,16 +1630,10 @@ local ACH_LIST = {
 local function makeTextAt(x, y, w, size, text, align)
   local ctl = createControl(PREFAB.TEXT)
   if ctl == nil then return nil end
-  pcall(function()
-    ctl:SetSizeDelta(w, size * 2)
-    ctl:SetAnchoredPosition(x, y)
-    ctl.text = text
-    ctl.fontSize = size
-    ctl.fontColor = COLOR.TEXT
-    ctl.enableOutline = true
-    ctl.outlineColor = COLOR.OUTLINE
-    ctl.horizontalAlignment = align or Enum.TextHorizontalAlignment.Middle
-  end)
+  -- 同上：先定尺寸，再写属性（自适应字号按当前尺寸估算）
+  pcall(function() ctl:SetSizeDelta(w, size * 3) end)
+  styleText(ctl, text, size, align)
+  pcall(function() ctl:SetAnchoredPosition(x, y) end)
   return ctl
 end
 
@@ -1284,13 +1654,27 @@ local function buildMenuUI()
 
   -- 主菜单页
   MENU.menuTexts[1] = makeTextAt(0, 250, 860, 64, "坦克动荡")
-  MENU.menuTexts[2] = makeTextAt(0, 186, 860, 22, "千星奇域还原版 · 单人对战 AI")
+  MENU.menuTexts[2] = makeTextAt(0, 186, 860, 22, "千星奇域还原版 · 单人 / 双人")
   MENU.menuTexts[3] = makeTextAt(0, 150, 860, 18, "原版「联机对战 / 成就上传」已本地化，详见「关于」", Enum.TextHorizontalAlignment.Middle)
   for i = 1, #MENU_ITEMS do
     MENU.menuTexts[3 + i] = makeTextAt(0, 74 - (i - 1) * 52, 460, 30, MENU_ITEMS[i])
   end
   MENU.menuTexts[3 + #MENU_ITEMS + 1] =
     makeTextAt(0, -244, 860, 20, "W / S 选择      空格 · Q · 左键 确认", Enum.TextHorizontalAlignment.Middle)
+
+  -- 准备页（原版 controlsNPlayer）：标题 + 每个参战位一行（色块 / 名称 / 状态）
+  MENU.readyTexts[1] = makeTextAt(0, 236, 860, 48, "准备")
+  MENU.readyTexts[2] = makeTextAt(0, 176, 860, 20, "每位玩家按下自己的开火键加入", Enum.TextHorizontalAlignment.Middle)
+  for i = 1, 2 do
+    local y = 90 - (i - 1) * 120
+    MENU.readyRows[i] = {
+      swatch = makeBar(-390, y, 76, 76, COLOR.SEL),
+      name   = makeTextAt(-210, y, 280, 26, "", Enum.TextHorizontalAlignment.Left),
+      act    = makeTextAt(200, y, 480, 20, "", Enum.TextHorizontalAlignment.Left),
+    }
+  end
+  MENU.readyTexts[3] = makeTextAt(0, -200, 860, 20, "全部加入后 3-2-1 开始      R 返回菜单", Enum.TextHorizontalAlignment.Middle)
+  MENU.readyTexts[4] = makeTextAt(0, 0, 700, 130, "", Enum.TextHorizontalAlignment.Middle)
 
   -- 设置页
   MENU.setTexts[1] = makeTextAt(0, 262, 860, 40, "设置")
@@ -1378,6 +1762,91 @@ local function updateAboutTexts()
   end
 end
 
+-- 层级重排：本项目所有部件都实例化在同一个宿主控件下（同级），
+-- 而引擎规则是「同级控件按创建顺序叠放，后创建的在上」（见官方文档 界面控件.md §四）。
+-- 由于控件池复用，坦克部件可能比后建的墙 / 补给箱"资历更浅"而被压住 → 表现为隐形。
+-- 这里在关键时机把各组控件自下而上 SetAsLastSibling()，固定最终叠放：
+--   菜单 / HUD > 坦克 > 炮弹 / 特效 > 补给箱 > 墙 > 地板
+local zorderBroken = false
+applyZOrder = function()
+  if zorderBroken then return end
+  local ok = pcall(function()
+    local function up(ctl)
+      if ctl ~= nil then ctl:SetAsLastSibling() end
+    end
+    -- 抬起一组控件。列表元素有两种形态，必须区分：
+    --   ①「部件表」{ ctl=控件, shape=…, lx=… }（vpart 产出，如 vis / baseArt / segs）→ 取 .ctl；
+    --   ②「控件本身」（makeTextAt / makeText 直接返回的控件，如 MENU.menuTexts）→ 用它自身。
+    -- 之前一律写 up(part.ctl)，对形态②恒为 nil → up(nil) 静默跳过，
+    -- 导致菜单文字从未被抬起，而随后 up(MENU.panel) 把面板抬到最上层，
+    -- 深色面板正好盖住所有菜单文字（主界面「有面板无字」的真根因）。
+    local function upList(list)
+      if list == nil then return end
+      for i = 1, #list do
+        local part = list[i]
+        if part ~= nil then up(part.ctl or part) end
+      end
+    end
+
+    -- ① 地板 → ② 墙（每步都抬到最上，故调用顺序即最终叠放顺序）
+    up(G.floorCtl)
+    if G.wallParts ~= nil then
+      for i = 1, #G.wallParts do up(G.wallParts[i].ctl) end
+    end
+    -- ③ 补给箱
+    if G.crates ~= nil then
+      for i = 1, #G.crates do upList(G.crates[i].vis) end
+    end
+    -- ④ 炮弹（含折线激光 / 死亡射线的线段池与弹头）
+    if G.projectiles ~= nil then
+      for i = 1, #G.projectiles do
+        local p = G.projectiles[i]
+        upList(p.vis)
+        if p.visHolder ~= nil then upList(p.visHolder.segs) end
+        if p.ball ~= nil then up(p.ball.ctl) end
+      end
+    end
+    -- ⑤ 炮口闪光 / 火花（线段池）
+    if G.sparkHolder ~= nil then upList(G.sparkHolder.segs) end
+    -- ⑥ 特效
+    if G.effects ~= nil then
+      for i = 1, #G.effects do upList(G.effects[i].vis) end
+    end
+    -- ⑦ 坦克（车体 + 炮塔）
+    if G.tanks ~= nil then
+      for i = 1, #G.tanks do
+        local t = G.tanks[i]
+        if t.alive then
+          upList(t.baseArt)
+          upList(t.turretArt)
+        end
+      end
+    end
+    -- ⑧ HUD
+    up(hud.score); up(hud.weapon); up(hud.hint)
+    -- ⑨ 菜单（面板 → 选中条 → 文字）
+    up(MENU.panel); up(MENU.hl)
+    upList(MENU.menuTexts); upList(MENU.setTexts)
+    upList(MENU.setLabels); upList(MENU.setValues)
+    upList(MENU.aboutTexts); upList(MENU.achTexts)
+    up(MENU.aboutStats); up(MENU.aboutAch)
+    -- 准备页 / 倒计时
+    upList(MENU.readyTexts)
+    for i = 1, #MENU.readyRows do
+      local r = MENU.readyRows[i]
+      up(r.swatch); up(r.name); up(r.act)
+    end
+  end)
+  if not ok then
+    zorderBroken = true
+    printerr("[坦克动荡] SetAsLastSibling 不可用，层级重排已停用；"
+      .. "请在编辑器「界面控件组管理」把本关卡改为【层级渲染(新)】并给模板配置层级")
+  end
+end
+
+-- 准备页各行文本 / 色块刷新（前向声明，供 refreshMenu 引用）
+local updateReadyRows
+
 local function refreshMenu()
   local p = MENU.phase
   -- 切页时清空输入边沿缓存，避免上一页残留的按键状态造成误触发
@@ -1402,6 +1871,24 @@ local function refreshMenu()
   vis(MENU.aboutStats, onAbout)
   vis(MENU.aboutAch, onAbout)
   for i = 1, #MENU.achTexts do vis(MENU.achTexts[i], onAbout) end
+
+  -- 准备页 / 倒计时页
+  local onReady, onCd = (p == "ready"), (p == "countdown")
+  for i = 1, #MENU.readyTexts do
+    local ctl = MENU.readyTexts[i]
+    if i == 4 then vis(ctl, onCd) else vis(ctl, onReady) end
+  end
+  for i = 1, #MENU.readyRows do
+    local r = MENU.readyRows[i]
+    vis(r.swatch, onReady); vis(r.name, onReady); vis(r.act, onReady)
+  end
+  if onReady then updateReadyRows() end
+  if onCd then
+    local ctl = MENU.readyTexts[4]
+    if ctl ~= nil then
+      pcall(function() ctl.text = (MENU.cdTick >= 3) and "GO!" or tostring(3 - MENU.cdTick) end)
+    end
+  end
 
   vis(MENU.hl, onMenu or onSet)
   if onMenu then
@@ -1433,6 +1920,36 @@ local function refreshMenu()
     end
   end
   if onAbout then updateAboutTexts() end
+  -- 切页后把菜单控件重新抬到最上层（菜单控件创建最早，否则会被后建的坦克压住）
+  applyZOrder()
+end
+
+-- 刷新准备页每一行：名称 / 操控说明 / 加入状态 / 色块。
+-- 加入后该行的色块变成对应玩家色（对应原版 playerNControls.background.setRGB）。
+updateReadyRows = function()
+  local slots = MODE_SLOTS[MENU.mode] or MODE_SLOTS.solo
+  for i = 1, #MENU.readyRows do
+    local r = MENU.readyRows[i]
+    local sl = slots[i]
+    if sl == nil then
+      pcall(function() r.name.text = "" end)
+      pcall(function() r.act.text = "" end)
+    else
+      local sk = sl.scheme and SCHEME_KEY[sl.scheme] or nil
+      local joined = (sl.ai == true) or (MENU.joined[i] == true)
+      local ctlHint = sl.ai and "电脑操控" or ((sk and sk.hint) or "")
+      local status
+      if sl.ai then status = "已加入"
+      elseif joined then status = "已加入"
+      else status = "按 " .. ((sk and sk.fireLabel) or "?") .. " 加入" end
+      pcall(function() r.name.text = sl.name end)
+      pcall(function()
+        r.act.text = status .. "    " .. ctlHint
+        r.act.fontColor = joined and COLOR.OK or COLOR.ACCENT
+        r.swatch.imageColor = joined and sl.color or COLOR.SEL
+      end)
+    end
+  end
 end
 
 local function openPage(name, back)
@@ -1441,14 +1958,80 @@ local function openPage(name, back)
   refreshMenu()
 end
 
-local function startPlaying()
-  MENU.phase = "playing"
+-- 按模式配置每辆坦克：控制方案 / 是否人类 / 车体色 / 是否 AI（莱卡）。
+-- 对应原版 frame_7（单人：红 vs 莱卡）、frame_19（双人：红 vs 绿）。
+local function applyMode(mode)
+  G.mode = mode
+  local slots = MODE_SLOTS[mode] or MODE_SLOTS.solo
+  for i = 1, #G.tanks do
+    local t = G.tanks[i]
+    local sl = slots[i]
+    if sl == nil then
+      t.baseColor, t.turretColor = COLOR.AI, COLOR.AI
+      t.controlIndex, t.isPlayer, t.ai = nil, false, true
+    else
+      t.baseColor, t.turretColor = sl.color, sl.color
+      t.controlIndex = sl.scheme
+      t.isPlayer = (sl.scheme ~= nil)
+      t.ai = sl.ai and true or nil
+      t.aiName = sl.name
+    end
+    -- 颜色变了，重建车体 / 炮塔美术
+    buildBaseArt(t)
+    buildTurretArt(t)
+  end
+  if hud.hint ~= nil then
+    local s = (mode == "duo")
+      and "红方 S/E/F/D + Q    绿方 方向键 + .    设置：R"
+      or  "S/E/F/D 移动 · Q 开火    设置：R"
+    pcall(function() hud.hint.text = s end)
+  end
+end
+
+-- 进入准备页（原版 controlsNPlayer）。快照各玩家开火状态，避免「按着开火键进页」被判定为已加入。
+local function beginReady(mode)
+  MENU.mode = mode
+  MENU.back = "menu"
+  MENU.phase = "ready"
+  MENU.joined, MENU.joinPrev = {}, {}
+  local slots = MODE_SLOTS[mode] or MODE_SLOTS.solo
+  for n = 1, #slots do
+    local sl = slots[n]
+    MENU.joined[n] = (sl.ai == true)
+    if sl.scheme ~= nil then
+      local pin = G.pinputs[sl.scheme]
+      MENU.joinPrev[sl.scheme] = (pin ~= nil and pin.fire) or false
+    end
+  end
+  MENU.prev.fire = G.input.fire
+  updateReadyRows()
+  refreshMenu()
+end
+
+-- 3-2-1-GO 倒计时（原版 generateMasterMazeAndStartCountdown：500ms 一格）
+local function beginCountdown()
+  MENU.phase = "countdown"
+  MENU.cdTick = 0
+  MENU.cdTimer = 0
+  refreshMenu()
+end
+
+-- 倒计时结束 → 应用模式并开始首回合
+local function beginMatch()
+  applyMode(MENU.mode)
   G.accum = 0
+  -- 进入对局前清空所有开火状态：开火键同时是「加入/确认」键，
+  -- 若不清除，首帧会立刻开炮。记录为「按下」使对局中必须重新抬手再按。
+  G.input.fire = false
+  for i = 1, #G.pinputs do G.pinputs[i].fire = false end
+  MENU.prev.fire = true
+  MENU.phase = "playing"
+  audioApi.setBgm("battle")
   startNewRound()
   refreshMenu()
 end
 
-local function stepMenuInput()
+local function stepMenuInput(dt)
   local i, pv = G.input, MENU.prev
   local up      = i.fwd   and not pv.fwd
   local down    = i.back  and not pv.back
@@ -1463,9 +2046,39 @@ local function stepMenuInput()
     if down then MENU.sel = MENU.sel + 1; if MENU.sel > #MENU_ITEMS then MENU.sel = 1 end end
     if up or down then refreshMenu() end
     if confirm then
-      if MENU.sel == 1 then startPlaying()
-      elseif MENU.sel == 2 then openPage("settings", "menu")
+      if MENU.sel == 1 then beginReady("solo")
+      elseif MENU.sel == 2 then beginReady("duo")
+      elseif MENU.sel == 3 then openPage("settings", "menu")
       else openPage("about", "menu") end
+    end
+  elseif ph == "ready" then
+    -- 每位玩家按自己的开火键加入（原版：P1 按 Q、P2 按 M）；AI 位视为已加入
+    local slots = MODE_SLOTS[MENU.mode] or MODE_SLOTS.solo
+    local allJoined = true
+    for n = 1, #slots do
+      local sl = slots[n]
+      if sl.scheme ~= nil then
+        local pin = G.pinputs[sl.scheme]
+        local now = (pin ~= nil and pin.fire) or false
+        if now and not MENU.joinPrev[sl.scheme] then
+          MENU.joined[n] = true
+          updateReadyRows()
+        end
+        MENU.joinPrev[sl.scheme] = now
+      end
+      if MENU.joined[n] ~= true then allJoined = false end
+    end
+    if allJoined then beginCountdown() end
+  elseif ph == "countdown" then
+    MENU.cdTimer = MENU.cdTimer + (dt or 0)
+    while MENU.cdTimer >= 0.5 do
+      MENU.cdTimer = MENU.cdTimer - 0.5
+      MENU.cdTick = MENU.cdTick + 1
+      if MENU.cdTick >= 4 then beginMatch(); return end
+    end
+    local ctl = MENU.readyTexts[4]
+    if ctl ~= nil then
+      pcall(function() ctl.text = (MENU.cdTick >= 3) and "GO!" or tostring(3 - MENU.cdTick) end)
     end
   elseif ph == "settings" then
     if up then MENU.setSel = MENU.setSel - 1; if MENU.setSel < 1 then MENU.setSel = #SET_ROWS end end
@@ -1477,7 +2090,7 @@ local function stepMenuInput()
   end
 end
 
--- 设置键：对战期打开设置（暂停），设置/关于页返回。多候选键，取运行时第一个可用的。
+-- 设置键：对战期打开设置（暂停），设置/关于/准备页返回。多候选键，取运行时第一个可用的。
 local function onMenuKey()
   local ph = MENU.phase
   if ph == "playing" then
@@ -1485,6 +2098,8 @@ local function onMenuKey()
     MENU.phase = "settings"
   elseif ph == "settings" or ph == "about" then
     MENU.phase = MENU.back or "menu"
+  elseif ph == "ready" or ph == "countdown" then
+    MENU.phase = "menu"
   else
     MENU.back = "menu"
     MENU.phase = "settings"
@@ -1497,7 +2112,6 @@ local function bindMenuKey()
     "KeyboardCharacterSkill3KeyDown",   -- R
     "KeyboardCraftspersonKey14Down",    -- G
     "KeyboardCraftspersonKey29Down",    -- \
-    "KeyboardInteractKeyDown",          -- F
   }
   for i = 1, #candidates do
     if eventType(candidates[i]) ~= nil then
@@ -1510,28 +2124,23 @@ local function bindMenuKey()
   print("[坦克动荡] 未找到可用的设置键")
 end
 
--- 击杀登记 → 本地战绩 + 本地成就（原版 registerHit / unlockAchievement 的本地等价）
+-- 击杀登记 → 本地战绩 + 本地成就；并把新解锁成就上报（原版 registerHit / unlockAchievement）
 registerKill = function(victim, source)
   if victim == nil or source == nil then return end
   local player = G.tanks[G.playerIndex]
   if player == nil then return end
   if source == player then
-    G.stats.kills = G.stats.kills + 1
-    if victim.ai then
-      G.ach.consecutive = (G.ach.consecutive or 0) + 1
-      if G.ach.consecutive >= 10 then G.ach.unlocked[28] = true end
-      if G.ach.consecutive >= 25 then G.ach.unlocked[35] = true end
-      -- 34：AI 普通弹打光（bulletsFired 达上限）时将其击杀
-      if victim.currentWeapon == "bullet"
-         and (victim.bulletsFired or 0) >= C.SETTINGS.maxBullets then
-        G.ach.unlocked[34] = true
-      end
-    else
-      G.ach.consecutive = 0
-    end
+    -- dryKill 判定：目标用的是普通炮弹且已打光（bulletsFired 达上限）
+    local dry = (victim.currentWeapon == "bullet")
+      and ((victim.bulletsFired or 0) >= C.SETTINGS.maxBullets)
+    local newly = achApi.apply(G.ach, {
+      type = "kill", byPlayer = true, victimAi = victim.ai == true, victimDry = dry,
+    })
+    statsApi.onKill(G.stats, true)
+    reportNewAch(newly)
   elseif victim == player then
-    G.stats.deaths = G.stats.deaths + 1
-    G.ach.consecutive = 0
+    statsApi.onDeath(G.stats)
+    achApi.apply(G.ach, { type = "death" })
   end
 end
 
@@ -1550,6 +2159,10 @@ end
 function OnStart()
   if host == nil then return end
   pcall(function() host.disableKeyEventPassthrough = true end)
+  selfCheckPrefabs()
+  bindAudioBackend()
+  bindNet()
+  audioApi.setBgm("menu")
 
   -- 全屏遮罩（盖住场景草地）
   local cover = createControl(PREFAB.SQUARE)
@@ -1566,15 +2179,18 @@ function OnStart()
   for i = 1, CFG.TANK_COUNT do
     G.tanks[i] = createTank(i, 0, 0)
   end
-  for i = 1, #G.tanks do
-    if not G.tanks[i].isPlayer then G.tanks[i].ai = true end
-  end
-
+  -- 默认单人（红 vs 莱卡）；真正开赛时由 beginMatch 调用 applyMode 按所选模式重配
   setupHUD()
+  applyMode("solo")
   setupInput()
   buildMenuUI()
   bindMenuKey()
   refreshMenu()
+  -- 把自检探针抬到最上层：它在本函数最开头创建，会被后建的菜单面板/文字压住而看不见。
+  -- 探针存活约 1 秒（见 OnLevelUpdate），用于肉眼确认「文本框能否显示」。
+  if G.textProbe ~= nil then
+    pcall(function() G.textProbe:SetAsLastSibling() end)
+  end
   G.running = true
   print("[坦克动荡] OnStart 完成：进入主菜单（W/S 选择，空格/Q/左键 确认）")
   script:EnableUpdate(true)
@@ -1587,6 +2203,15 @@ function OnUpdate() end
 function OnLevelUpdate(dt)
   if not G.running or host == nil then return end
   dt = min(dt, 0.25)
+  audioClock = audioClock + dt
+  -- 自检探针：存活约 1 秒供肉眼确认，到时销毁
+  if G.textProbe ~= nil then
+    G.textProbeTtl = (G.textProbeTtl or 0) - dt
+    if G.textProbeTtl <= 0 then
+      pcall(function() game.DestroyClientUIControl(G.textProbe) end)
+      G.textProbe = nil
+    end
+  end
   if MENU.phase == "playing" then
     G.accum = G.accum + dt
     local steps = 0
@@ -1597,8 +2222,8 @@ function OnLevelUpdate(dt)
     end
     if steps >= CFG.MAX_STEPS then G.accum = 0 end
   else
-    -- 菜单 / 设置 / 关于：只处理导航，不推进世界（等价于原版的暂停）
-    stepMenuInput()
+    -- 菜单 / 准备 / 倒计时 / 设置 / 关于：只处理导航，不推进世界（等价于原版的暂停）
+    stepMenuInput(dt)
   end
 end
 
