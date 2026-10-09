@@ -1339,6 +1339,7 @@ local function stepFrame()
     clearProjectiles()
     clearCrates()
     updateScoreHUD()
+    showResult("【回合结算】" .. statsApi.summary(G.stats), 2.0)
   elseif ev == "reset" then
     startNewRound()
     return
@@ -1447,6 +1448,25 @@ local function setupHUD()
   -- 武器与操作提示放在舞台上方，避免压住迷宫
   hud.weapon = makeText(stageY(-52), 22, "武器：普通炮弹")
   hud.hint = makeText(stageY(-20), 20, "红方 S/E/F/D 移动 · Q 开火    设置：R")
+  -- 本地结算面板：回合结束短暂显示一次战绩小结（原版为服务器结算/奖励发放）。
+  -- 真正的奖励与段位结算在编辑器节点图完成，这里只做本地可视化反馈。
+  hud.result = makeText(stageY(STAGE_H / 2), 26, "")
+  hud.resultTtl = 0
+end
+
+function showResult(text, seconds)
+  if hud.result == nil then return end
+  hud.result.text = text
+  hud.resultTtl = seconds or 2.0
+  hud.result:SetVisible(true)
+end
+
+local function stepResult(dt)
+  if hud.result == nil then return end
+  if hud.resultTtl > 0 then
+    hud.resultTtl = hud.resultTtl - dt
+    if hud.resultTtl <= 0 then hud.result:SetVisible(false) end
+  end
 end
 
 -- ============================================================
@@ -1619,12 +1639,15 @@ local ABOUT_LINES = {
   "【准备流程】选模式 → 每位玩家按自己的开火键加入 → 3-2-1-GO 开始",
 }
 
--- 本地成就（对应原版 28 / 35 / 34 / 36；其余为联机或鼠标操控专属，本地不适用）
+-- 本地成就（与 src/ach.lua 的 A.LIST 对齐为 7 条）
 local ACH_LIST = {
   { id = 28, label = "连杀 AI 满 10 次" },
   { id = 35, label = "连杀 AI 满 25 次" },
   { id = 34, label = "在 AI 弹尽时将其击杀" },
   { id = 36, label = "激光不反弹直接命中 AI（需弹道信息，本地暂不适用）" },
+  { id = 40, label = "赢得 1 个回合" },
+  { id = 41, label = "累计击杀 50 次" },
+  { id = 42, label = "累计完成 10 个回合" },
 }
 
 local function makeTextAt(x, y, w, size, text, align)
@@ -2204,6 +2227,7 @@ function OnLevelUpdate(dt)
   if not G.running or host == nil then return end
   dt = min(dt, 0.25)
   audioClock = audioClock + dt
+  stepResult(dt)
   -- 自检探针：存活约 1 秒供肉眼确认，到时销毁
   if G.textProbe ~= nil then
     G.textProbeTtl = (G.textProbeTtl or 0) - dt

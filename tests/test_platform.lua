@@ -37,6 +37,8 @@ local function makeControl(prefab)
   function c:SetAnchoredPosition() end
   function c:SetLocalRotation() end
   function c:SetVisible(v) self.visible = v end
+  function c:SetActive() end
+  function c:SetAsLastSibling() end
   created = created + 1
   allControls[#allControls + 1] = c
   return c
@@ -49,7 +51,15 @@ game = {
     assert(parent ~= nil, "InstantiateClientUIControl 的 parent 为空")
     return makeControl(prefab)
   end,
-  PlayAudio2D = function() end,
+  PlayAudio2D = function() return 1 end,
+  StopAudio = function() end,
+  IsAudioAlive = function() return true end,
+  ServerSignal = function(name)
+    return {
+      AddInt = function() end, AddFloat = function() end, AddString = function() end,
+      AddBool = function() end, AddIntList = function() end, SendSignal = function() end,
+    }
+  end,
 }
 
 Enum = {
@@ -78,6 +88,8 @@ function host:AddKeyEventListener(ev, cb) listeners[ev] = cb end
 script = {
   object = host,
   EnableUpdate = function() end,
+  RegisterServerSignalHandler = function() end,
+  UnregisterServerSignalHandler = function() end,
 }
 
 -- ============================================================
@@ -172,22 +184,28 @@ end
 local titleCtl = findText("坦克动荡")
 check("主菜单标题可见", titleCtl ~= nil and titleCtl.visible == true)
 
--- 主菜单导航：设置页 → 切换 → 返回 → 关于页 → 返回 → 开始游戏
+-- 主菜单导航：设置页 → 切换 → 返回 → 关于页 → 返回 → 单人游戏 → 准备页 → 加入 → 倒计时
+local function navDown() press("KeyboardMoveBackwardKeyDown"); frame(1); press("KeyboardMoveBackwardKeyUp"); frame(1) end
+local function navUp()   press("KeyboardMoveForwardKeyDown");  frame(1); press("KeyboardMoveForwardKeyUp");  frame(1) end
+
 local okMenu, errMenu = pcall(function()
-  press("KeyboardMoveBackwardKeyDown"); frame(1); press("KeyboardMoveBackwardKeyUp"); frame(1)  -- 选中「设置」
-  tapConfirm()                                                                                 -- 进入设置
-  press("KeyboardMoveRightKeyDown"); frame(1); press("KeyboardMoveRightKeyUp"); frame(1)       -- 切换首行
-  press("KeyboardCharacterSkill3KeyDown"); frame(1)                                            -- R 返回主菜单
-  press("KeyboardMoveBackwardKeyDown"); frame(1); press("KeyboardMoveBackwardKeyUp"); frame(1) -- 选中「关于」
-  tapConfirm()                                                                                 -- 进入关于
-  tapConfirm()                                                                                 -- 返回主菜单
-  press("KeyboardMoveForwardKeyDown"); frame(1); press("KeyboardMoveForwardKeyUp"); frame(1)   -- 上移到「设置」
-  press("KeyboardMoveForwardKeyDown"); frame(1); press("KeyboardMoveForwardKeyUp"); frame(1)   -- 上移到「开始游戏」
-  tapConfirm()                                                                                 -- 开始游戏
+  navDown(); navDown()                                                                          -- sel 1→3「设置」
+  tapConfirm()                                                                                  -- 进入设置
+  press("KeyboardMoveRightKeyDown"); frame(1); press("KeyboardMoveRightKeyUp"); frame(1)         -- 切换首行
+  press("KeyboardCharacterSkill3KeyDown"); frame(1)                                             -- R 返回主菜单
+  navDown()                                                                                     -- sel 3→4「关于」
+  tapConfirm()                                                                                  -- 进入关于
+  tapConfirm()                                                                                  -- 返回主菜单
+  navUp(); navUp(); navUp()                                                                      -- sel 4→1「单人游戏」
+  tapConfirm()                                                                                  -- 进入准备页（原版 controls1Player）
+  -- 准备页：红方（1P）按 Q 加入；莱卡为 AI 自动加入 → 触发 3-2-1-GO
+  press("KeyboardCharacterSkill2KeyDown"); frame(1)
+  press("KeyboardCharacterSkill2KeyUp");   frame(1)
+  frame(60)                                                                                     -- 跑完 3-2-1-GO 倒计时进入对局
 end)
 
 check("菜单 / 设置 / 关于 导航不报错", okMenu, okMenu and nil or tostring(errMenu))
-check("确认「开始游戏」后开局", roundLogs >= 1, "新回合次数=" .. roundLogs)
+check("确认「单人游戏」并加入后开局", roundLogs >= 1, "新回合次数=" .. roundLogs)
 check("开局后主菜单已隐藏", titleCtl ~= nil and titleCtl.visible == false)
 
 -- 按住"前进"跑一段
@@ -223,19 +241,19 @@ check("开火 + 移动长跑 6000 帧不报错", okLong, okLong and nil or tostr
 -- ============================================================
 check("回合推进（日志出现新回合）", roundLogs >= 1, "新回合次数=" .. roundLogs)
 
--- 计分 HUD：形如 "红 0   :   0 绿"
+-- 计分 HUD：形如 "红 0   :   0 莱卡"（单人）/ "红 0   :   0 绿"（双人）
 local scoreA, scoreB
 for i = 1, #allControls do
   local t = allControls[i].text
   if type(t) == "string" then
-    local a, b = t:match("红%s*(%d+)%s*:%s*(%d+)%s*绿")
+    local a, b = t:match("红%s*(%d+)%s*:%s*(%d+)")
     if a ~= nil then scoreA, scoreB = tonumber(a), tonumber(b) end
   end
 end
-check("计分 HUD 已刷新", scoreA ~= nil, "红=" .. tostring(scoreA) .. " 绿=" .. tostring(scoreB))
+check("计分 HUD 已刷新", scoreA ~= nil, "红=" .. tostring(scoreA) .. " 对手=" .. tostring(scoreB))
 check("分数已增长（回合结算生效）",
   (scoreA or 0) + (scoreB or 0) > 0,
-  "红=" .. tostring(scoreA) .. " 绿=" .. tostring(scoreB))
+  "红=" .. tostring(scoreA) .. " 对手=" .. tostring(scoreB))
 
 -- 控件池：长跑后总数应趋于稳定，不应随回合线性增长
 local after = created
@@ -244,6 +262,21 @@ check("控件池未无限增长", after < 4000, "累计创建控件=" .. after)
 local okDestroy, errDestroy = pcall(OnDestroy)
 
 check("OnDestroy 不报错", okDestroy, okDestroy and nil or tostring(errDestroy))
+
+-- ── 外围系统：结算面板 / 成就页扩展是否真的渲染出文本 ──
+-- 注：G 是产物 chunk 的局部变量，测试无法直接读取，故沿用本文件既有做法：扫描控件文本。
+local resultText, ach42Text
+for i = 1, #allControls do
+  local t = allControls[i].text
+  if type(t) == "string" then
+    if t:find("【回合结算】", 1, true) ~= nil then resultText = t end
+    if t:find("累计完成 10 个回合", 1, true) ~= nil then ach42Text = t end
+  end
+end
+check("外围系统：回合结算面板已写入战绩小结", resultText ~= nil, resultText)
+check("外围系统：结算面板已累计回合数（完成 >0 回合）",
+  resultText ~= nil and resultText:find("完成 0 回合", 1, true) == nil, resultText)
+check("外围系统：成就页已扩展到 7 条（含 id 42）", ach42Text ~= nil, ach42Text)
 
 print("")
 if failures == 0 then
