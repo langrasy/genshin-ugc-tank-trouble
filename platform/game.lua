@@ -235,52 +235,6 @@ local function selfCheckPrefabs()
       seg[#seg + 1] = order[i] .. "=" .. tostring(idx) .. " FAIL"
     end
   end
-  -- 额外探针：确认 TEXT 索引确实指向「文本框」，并把真机实际生效的情况打出来。
-  -- 注意：上一版只在单测桩件上验证过（桩未实现 SetActive / SetAsLastSibling），
-  -- 结论不可信。这里改成「真机自检」：把控件摆到屏幕上方并存活约 1 秒，
-  -- 日志打印每一项的实际读回值，失败点会直接暴露。
-  do
-    local ok, ctl = pcall(game.InstantiateClientUIControl, PREFAB.TEXT, host)
-    if ok and ctl ~= nil then
-      local function try(f)
-        local o, a, b, c, d = pcall(f)
-        if not o then return "<err>" end
-        return a, b, c, d
-      end
-      try(function()
-        ctl:SetAnchorMin(0.5, 0.5); ctl:SetAnchorMax(0.5, 0.5); ctl:SetPivot(0.5, 0.5)
-      end)
-      try(function() ctl:SetActive(true) end)
-      try(function() ctl:SetVisible(true) end)
-      try(function() ctl:SetSizeDelta(864, 102) end)
-      try(function() ctl.adaptiveFontSize = false end)
-      try(function() ctl.fontSize = 36 end)
-      try(function() ctl.text = "自检文本 OK" end)
-      try(function() ctl.fontColor = COLOR.TEXT end)
-      try(function() ctl.enableOutline = false end)
-      try(function() ctl:SetAnchoredPosition(0, 300) end)
-
-      local pp = tostring(try(function() return ctl.prefabIndex end))
-      local gsx, gsy = try(function() return ctl:GetSizeDelta() end)
-      local fsz = tostring(try(function() return ctl.fontSize end))
-      local back = tostring(try(function() return ctl.text end))
-      local ai = tostring(try(function() return ctl.activeInHierarchy end))
-      local vis = tostring(try(function() return ctl.visible end))
-      local fcr, fcg, fcb, fca = try(function() return Color.ToRGBA(ctl.fontColor) end)
-      seg[#seg + 1] = "TEXT探针 prefab=" .. pp
-        .. " size读回=" .. tostring(gsx) .. "x" .. tostring(gsy)
-        .. " fontSize=" .. fsz .. " text读回=" .. back
-        .. " activeInHierarchy=" .. ai .. " visible=" .. vis
-        .. " fontColor=" .. tostring(fcr) .. "," .. tostring(fcg) .. ","
-        .. tostring(fcb) .. "," .. tostring(fca)
-      -- 不立刻销毁：存活约 1 秒（见 OnLevelUpdate），供肉眼确认「文本框到底能不能显示」。
-      -- 在 OnStart 末尾会被抬到最上层，避免被后建的菜单面板压住。
-      G.textProbe = ctl
-      G.textProbeTtl = 1.0
-    else
-      seg[#seg + 1] = "TEXT探针 实例化失败"
-    end
-  end
   print("[坦克动荡] 模板自检：" .. table.concat(seg, " | "))
 end
 
@@ -327,7 +281,7 @@ G = {
   W = 0, H = 0, scale = 50, VS = STAGE_SCALE, gameX = 0, gameY = 0,
   maze = nil, reachable = {}, reachableIndex = nil, deadEnds = nil,
   tanks = {}, projectiles = {}, crates = {}, effects = {},
-  wallParts = {}, wallHolder = {},
+  wallParts = {},
   battle = nil,
   shakeX = 0, shakeY = 0,
   fieldCache = {}, distProxy = nil,
@@ -399,7 +353,6 @@ end
 local function buildMazeVisuals()
   vfree(G.wallParts)
   G.wallParts = {}
-  G.wallHolder = {}
   -- 地板控件随回合重建，先把旧的还回池子，避免每回合泄漏一个控件
   if G.floorCtl ~= nil then
     release("square", G.floorCtl)
@@ -2209,11 +2162,6 @@ function OnStart()
   buildMenuUI()
   bindMenuKey()
   refreshMenu()
-  -- 把自检探针抬到最上层：它在本函数最开头创建，会被后建的菜单面板/文字压住而看不见。
-  -- 探针存活约 1 秒（见 OnLevelUpdate），用于肉眼确认「文本框能否显示」。
-  if G.textProbe ~= nil then
-    pcall(function() G.textProbe:SetAsLastSibling() end)
-  end
   G.running = true
   print("[坦克动荡] OnStart 完成：进入主菜单（W/S 选择，空格/Q/左键 确认）")
   script:EnableUpdate(true)
@@ -2228,14 +2176,6 @@ function OnLevelUpdate(dt)
   dt = min(dt, 0.25)
   audioClock = audioClock + dt
   stepResult(dt)
-  -- 自检探针：存活约 1 秒供肉眼确认，到时销毁
-  if G.textProbe ~= nil then
-    G.textProbeTtl = (G.textProbeTtl or 0) - dt
-    if G.textProbeTtl <= 0 then
-      pcall(function() game.DestroyClientUIControl(G.textProbe) end)
-      G.textProbe = nil
-    end
-  end
   if MENU.phase == "playing" then
     G.accum = G.accum + dt
     local steps = 0
