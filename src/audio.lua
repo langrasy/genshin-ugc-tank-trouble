@@ -13,11 +13,18 @@ local A = {}
 
 A.MIN_GAP = 0.05   -- 同名声效最小间隔（秒），防止单帧内重复触发
 
+---@class AudioBackend
+---@field now fun(): number
+---@field play2d fun(audioId: integer): any
+---@field stop fun(handle: any)
+
+---@type AudioBackend|nil
 local backend = nil
 local ids = {}
 local sfxLast = {}
 local bgm = { name = nil, handle = nil }
 
+---@param b AudioBackend
 function A.bind(b)
   backend = b
   ids = {}
@@ -61,6 +68,7 @@ function A.setBgm(name)
 end
 
 function A.stopBgm()
+  if backend == nil then return false end
   if bgm.name == nil and bgm.handle == nil then return false end
   if bgm.handle ~= nil then backend.stop(bgm.handle) end
   bgm.name = nil

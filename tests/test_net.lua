@@ -8,6 +8,7 @@ local function ok(msg) print("[ok] " .. msg) end
 
 -- 假信号对象：记录收到的 Add* 调用与 SendSignal
 local function makeSignal()
+  ---@type table<string, any>
   local s = { adds = {}, sent = 0 }
   local names = { "AddInt", "AddFloat", "AddString", "AddBool", "AddIntList" }
   for _, n in ipairs(names) do
@@ -22,6 +23,7 @@ if N.emit("X", {}) ~= false then fail("未绑定时 emit 应返回 false") end
 ok("未绑定时安全返回 false")
 
 -- 2. 绑定后按类型写入并发送
+---@type any
 local last = nil
 N.bind({
   server = function(name) last = makeSignal(); last.name = name; return last end,
@@ -57,6 +59,7 @@ if N.dispatch("NeverRegistered") ~= false then fail("未注册应返回 false") 
 ok("服务器信号分发正确")
 
 -- 5. 便捷上报：回合 / 成就
+---@type any
 local rec = nil
 N.bind({ server = function() rec = makeSignal(); return rec end })
 if N.reportRound({ rounds = 5, victories = 3, kills = 12, deaths = 4 }) ~= true then fail("reportRound 失败") end

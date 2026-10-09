@@ -183,6 +183,7 @@ local function createControl(prefabIndex)
   -- 注意：imageType 是「图片类控件」的字段（API 721），文本框控件没有这个属性；
   -- 对它赋值会抛错，而这一批设置写在同一处，报错会连带跳过后面所有语句。
   if prefabIndex ~= PREFAB.TEXT then
+    ---@diagnostic disable-next-line: inject-field
     pcall(function() ctl.imageType = Enum.ImageType.Stretch end)
   end
   return ctl --[[@as ClientUIControl]]
