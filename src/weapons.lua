@@ -34,9 +34,9 @@
     ctx.onHit(owner,victim)    registerHit + destroyTank
     ctx.setWeapon(owner,kind)  setWeapon
     ctx.shake(v)               _root.shake 累计
-    ctx.keyDown(keyCode)       Key.isDown
+    ctx.turnInput(owner)       该 owner 当前的左右转键状态（遥控弹转向用；随玩家控制方式）
     ctx.mousePos()             mazemc 局部鼠标坐标
-    以及纯视觉回调：ctx.smoke / ctx.fragments / ctx.trail / ctx.particles / ctx.spark / ctx.sound
+    以及纯视觉回调：ctx.smoke / ctx.particles / ctx.spark / ctx.sound
 
   说明：原版 electricbullet 自身不含对坦克的命中判定（两个弹丸只弹跳 + 画电弧），
         故此处同样不产生伤害，保持与原版一致，不做"修正"。
@@ -70,7 +70,7 @@ function M.makeCtx(o)
     onHit = o.onHit or noop,
     setWeapon = o.setWeapon or noop,
     shake = o.shake or noop,
-    keyDown = o.keyDown or function() return false end,
+    turnInput = o.turnInput or function() return false, false end,
     mousePos = o.mousePos or function() return 0, 0 end,
     smoke = o.smoke or noop,
     fragments = o.fragments or noop,
@@ -81,8 +81,6 @@ function M.makeCtx(o)
     -- 寻路（homing 用）；由平台层预计算
     distancesForMaze = o.distancesForMaze,
     getShortestPathWithDistances = o.getShortestPathWithDistances,
-    -- 坦克前进（elToro 用）
-    attemptForward = o.attemptForward,
   }
 end
 
@@ -101,16 +99,20 @@ M.tankPointGlobal = tankPointGlobal
 
 -- 命中坦克判定：弹丸自身位置点是否落在某坦克贴图内（原版 hitCheck(tank,{0,0})）
 -- 命中后置 p.remove；遍历全部坦克（原版命中后仍继续循环）
+-- 返回**命中坦克数**（bullet 用它归还弹药槽；原版 DefineSprite_212_bullet:103 每命中一辆 `owner.bulletsFired--`）
 local function hitTanks(p, ctx, enabled)
-  if not enabled then return end
+  if not enabled then return 0 end
+  local n = 0
   local tanks = ctx.tanks
   for i = 1, #tanks do
     local t = tanks[i]
     if t.alive and ctx.tankContains(t, p.x, p.y) then
       ctx.onHit(p.owner, t)
       p.remove = true
+      n = n + 1
     end
   end
+  return n
 end
 
 -- 撞墙后的反弹：把位置回退到 prev，按 X/Y 单轴试探决定反射轴，再重新推进。
@@ -139,6 +141,8 @@ local function bounceSubsteps(p, ctx, n)
     if ctx.wallHit(p.x, p.y) then
       p.x, p.y = prevX, prevY
       resolveBounce(p, ctx, prevX, prevY)
+      -- 原版：撞墙反弹播 pingpong / pingpong2（随机二选一）
+      ctx.sound(random() > 0.5 and "soundBounce0" or "soundBounce1")
     end
   end
 end
@@ -240,6 +244,7 @@ function M.fireBullet(owner, ctx)
   local ang = (owner.rot - 90) * RAD
   local x, y = muzzle(owner, ctx)
   owner.bulletsFired = (owner.bulletsFired or 0) + 1
+  ctx.sound("soundBullet")   -- 原版：开火播 soundBullet
   return {
     kind = "bullet", owner = owner, color = owner.turretColor,
     x = x, y = y,
@@ -256,6 +261,7 @@ function M.fireLaser(owner, ctx)
   local x, y = muzzle(owner, ctx)
   owner.laserReady = false
   ctx.setEquipment(owner, "none")
+  ctx.sound("soundLaser")   -- 原版：激光发射
   return {
     kind = "laser", owner = owner, color = owner.turretColor,
     originX = x, originY = y, x = x, y = y,
@@ -268,6 +274,11 @@ function M.fireLaser(owner, ctx)
 end
 
 function M.fireFrag(owner, ctx)
+  -- 原版 fireFrag：若上一发仍在飞行（fragFired），再按开火键 = 引爆那一发，不再发射新弹。
+  if owner.fragFired and owner.alive and owner.lastFrag ~= nil then
+    M.detonateFrag(owner.lastFrag, ctx)
+    return nil
+  end
   local k = ctx.scale / 50
   local ang = (owner.rot - 90) * RAD
   local x, y = muzzle(owner, ctx)
@@ -279,6 +290,7 @@ function M.fireFrag(owner, ctx)
     lifetime = C.FRAGLIFETIME, deadly = C.FRAGDEADLY,
     intervals = C.FRAGHITCHECKINTERVALS, level = C.FRAGLEVELS,
   }
+  ctx.sound("soundFragment")   -- 原版：破片弹发射
   owner.lastFrag = p
   owner.fragFired = true
   return p
@@ -286,6 +298,7 @@ end
 
 function M.fireGatling(owner, ctx)
   owner.gatlingReady = false
+  ctx.sound("soundGatlingMotorStart")   -- 原版：马达启动
   return {
     kind = "gatling", owner = owner,
     active = true, spinSpeed = 0, fireCounter = 0, bulletsLeft = C.GATLINGBULLETS,
@@ -297,6 +310,8 @@ function M.fireDeathRay(owner, ctx)
   local ang = (owner.rot - 90) * RAD
   local x, y = muzzle(owner, ctx)
   owner.deathRayReady = false
+  -- 原版：按下即开始播「充能」音（frame_53:1408 soundDeathRayCharge.start(1)），发射时再换 Fire
+  ctx.sound("soundDeathRayCharge")
   return {
     kind = "deathRay", owner = owner, color = owner.turretColor,
     originX = x, originY = y, x = x, y = y,
@@ -315,6 +330,7 @@ function M.fireHoming(owner, ctx)
   local ang = (owner.rot - 90) * RAD
   local x, y = muzzle(owner, ctx)
   owner.homingReady = false
+  ctx.sound("soundHomingFire")   -- 原版：追踪弹发射
   return {
     kind = "homing", owner = owner, color = owner.turretColor,
     x = x, y = y, rotation = owner.rot,
@@ -451,8 +467,12 @@ end
 -- bullet：弹跳 → 命中 → 生命周期耗尽冒烟
 steppers.bullet = function(p, ctx)
   bounceSubsteps(p, ctx, p.intervals)
-  hitTanks(p, ctx, p.deadly == 0)
-  if p.remove then return false end
+  local hits = hitTanks(p, ctx, p.deadly == 0)
+  if p.remove then
+    -- 命中坦克也要归还弹药槽（原版 DefineSprite_212_bullet:100-113；每命中一辆扣 1）
+    if p.owner then p.owner.bulletsFired = (p.owner.bulletsFired or 0) - hits end
+    return false
+  end
   if p.deadly > 0 then p.deadly = p.deadly - 1 end
   p.lifetime = p.lifetime - 1
   if p.lifetime <= 0 then
@@ -523,6 +543,7 @@ end
 
 -- fragbomb：弹跳 → 命中/寿命尽 → 引爆
 steppers.frag = function(p, ctx)
+  if p.remove then return false end        -- 已被引爆（引爆发生在开火逻辑里）则不再步进
   if p.owner and not p.owner.alive then
     M.detonateFrag(p, ctx)
     return false
@@ -571,6 +592,11 @@ steppers.gatling = function(p, ctx)
   end
   if p.active then
     if p.spinSpeed < C.GATLINGSPINSPEED then p.spinSpeed = p.spinSpeed + 1 end
+    if p.spinSpeed == C.GATLINGSPINSPEED and not p.motorPlayed then
+      p.motorPlayed = true
+      -- 原版 soundGatlingMotor.start(0,999) 为**循环**；平台无循环播放 API → 满转时播一次作代表
+      ctx.sound("soundGatlingMotor")
+    end
     if p.spinSpeed == C.GATLINGSPINSPEED then
       p.fireCounter = p.fireCounter + 1
       if p.fireCounter % 3 == 0 then
@@ -599,6 +625,7 @@ steppers.gatling = function(p, ctx)
     if p.spinSpeed == 0 then
       p.owner.gatlingReady = true
       ctx.setWeapon(p.owner, "bullet")
+      ctx.sound("soundGatlingMotorStop")   -- 原版：马达停止
       if p.spinSpeed == 0 and p.owner.gatlingReady then return false end
     end
   end
@@ -644,6 +671,11 @@ steppers.homing = function(p, ctx)
         gx, gy = p.target.x, p.target.y
       end
       p.soundCounter = p.soundCounter + 1
+      -- 原版：锁定后按「到目标的距离」周期性地发信号 ping（(dist+1)*4 帧一次，越近越频）
+      if p.soundCounter > ((cur or 0) + 1) * 4 then
+        p.soundCounter = 0
+        ctx.sound("soundHoming2")
+      end
       local step = 0.12 / p.intervals
       for _ = 1, p.intervals do
         local prevX, prevY = p.x, p.y
@@ -756,6 +788,8 @@ steppers.mine = function(p, ctx)
       return false
     end
   end
+  -- 原版：deadly==1（切换为「待命」帧）时启动地雷警示音 soundMineActivate
+  if p.deadly == 1 then ctx.sound("soundMineActivate") end
   if p.deadly > 0 then p.deadly = p.deadly - 1 end
   if p.deadly == 0 and not p.armed then
     if p.hideCounter > 0 then p.hideCounter = p.hideCounter - 1 end
@@ -793,9 +827,10 @@ steppers.remote = function(p, ctx)
       end
       p.rotation = (aimAngle + PI / 2) * 180 / PI
     else
+      local turnLeft, turnRight = ctx.turnInput(p.owner)
       local turnSize = 0
-      if ctx.keyDown(p.owner.KEYTURNLEFT) then turnSize = -p.turnSpeed end
-      if ctx.keyDown(p.owner.KEYTURNRIGHT) then turnSize = turnSize + p.turnSpeed end
+      if turnLeft then turnSize = -p.turnSpeed end
+      if turnRight then turnSize = turnSize + p.turnSpeed end
       p.rotation = p.rotation + turnSize
     end
   end
@@ -848,6 +883,12 @@ steppers.remote = function(p, ctx)
     end
   end
   if p.deadly > 0 then p.deadly = p.deadly - 1 end
+  -- 原版：遥控导弹飞行期间由 rCSignal 周期性地播遥控信号音
+  p.signalCounter = (p.signalCounter or 0) + 1
+  if p.signalCounter >= 20 and p.owner.alive then
+    p.signalCounter = 0
+    ctx.sound("soundRemoteSignal")
+  end
   p.lifetime = p.lifetime - 1
   if p.lifetime <= 0 then
     p.owner.remoteControlling = false
@@ -988,6 +1029,10 @@ steppers.deathRay = function(p, ctx)
   end
 
   if p.active then
+    if not p.firedSound then
+      p.firedSound = true
+      ctx.sound("soundDeathRayFire")   -- 原版：蓄力结束、射线成形时播发射音
+    end
     p.ballSize = max(0, p.ballSize - 5)
     p.rayThickness = min(5, p.rayThickness + 1)
     ctx.particles("deathRay", p)

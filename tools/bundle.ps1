@@ -1,4 +1,4 @@
-﻿# 坦克动荡 —— 单文件打包器
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿# 坦克动荡 —— 单文件打包器
 # 把 src/*.lua（纯逻辑模块）与 platform/game.lua（千星奇域平台层）内联成一份
 # 可被千星奇域运行时直接加载的 tank_trouble.lua。
 #
@@ -23,6 +23,7 @@ $modules = @(
     'src.weapons',
     'src.ai',
     'src.round',
+    'src.online',
     'src.net',
     'src.audio',
     'src.ach',

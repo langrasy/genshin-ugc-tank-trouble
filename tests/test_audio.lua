@@ -3,6 +3,7 @@ package.path = package.path .. ";./?.lua"
 
 local A = require("src.audio")
 
+---@noreturn
 local function fail(msg) print("[FAIL] " .. msg); os.exit(1) end
 local function ok(msg) print("[ok] " .. msg) end
 
@@ -62,5 +63,38 @@ if A.setBgm("unknown") ~= true then fail("未注册 BGM 仍应切换状态") end
 if #b2.played ~= 0 then fail("未注册 BGM 不应播放") end
 if A.currentBgm() ~= "unknown" then fail("应记录当前 BGM 名") end
 ok("未注册 BGM 只改状态不播放")
+
+-- 6. 不同名字解析到同一音频 ID：只换名，不停止 / 不重播（临时占位 BGM 共用一条曲子时用）
+local b3 = makeBackend()
+A.bind(b3)
+A.register("menu", 10104)
+A.register("battle", 10104)
+if A.setBgm("menu") ~= true then fail("占位 BGM 首播应成功") end
+if #b3.played ~= 1 then fail("占位 BGM 应播放一次") end
+if A.setBgm("battle") ~= true then fail("切到同名 ID 的另一曲名应成功") end
+if #b3.stopped ~= 0 then fail("同一 ID 切换不应停止旧 BGM") end
+if #b3.played ~= 1 then fail("同一 ID 切换不应重播") end
+if A.currentBgm() ~= "battle" then fail("当前 BGM 名应更新为 battle") end
+ok("同一音频 ID 的不同曲名切换不重启")
+
+-- 7. 音效 / 音乐两个独立开关：音效静音不影响 BGM；音乐静音停 BGM 并记住曲目，恢复后续播
+local b4 = makeBackend()
+A.bind(b4)
+A.register("shoot", 3001)
+A.register("menu", 3002)
+if A.setBgm("menu") ~= true then fail("BGM 应先播放") end
+if A.setSfxMuted(true) ~= true then fail("setSfxMuted 应成功") end
+if A.isSfxMuted() ~= true then fail("isSfxMuted 应 true") end
+if A.playSfx("shoot") ~= false then fail("音效静音时不应播放") end
+if A.currentBgm() ~= "menu" then fail("音效静音不应影响 BGM") end
+if A.setSfxMuted(false) ~= true then fail("取消音效静音应成功") end
+if A.playSfx("shoot") ~= true then fail("取消音效静音后应可播放") end
+local played = #b4.played
+if A.setBgmMuted(true) ~= true then fail("setBgmMuted 应成功") end
+if A.isBgmMuted() ~= true then fail("isBgmMuted 应 true") end
+if #b4.stopped < 1 then fail("音乐静音应停止当前 BGM") end
+if A.setBgmMuted(false) ~= true then fail("取消音乐静音应成功") end
+if #b4.played ~= played + 1 then fail("取消音乐静音应续播同一曲") end
+ok("音效 / 音乐 两个开关相互独立")
 
 print("\n全部通过。")

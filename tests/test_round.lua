@@ -4,6 +4,7 @@ package.path = package.path .. ";./?.lua"
 local C = require("src.constants")
 local R = require("src.round")
 
+---@noreturn
 local function fail(msg) print("[FAIL] " .. msg); os.exit(1) end
 local function ok(msg) print("[ok] " .. msg) end
 

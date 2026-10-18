@@ -31,7 +31,8 @@
   "workspace.ignoreDir": [
     ".git",
     "tools",
-    "reference"
+    "reference",
+    "minigames"
   ],
   "format.enable": false
 }

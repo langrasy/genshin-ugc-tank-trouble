@@ -4,13 +4,12 @@
        deaths   玩家阵亡数
        victories 玩家获胜回合数
        rounds   完成的回合数
-       selfKills 自杀数（预留，原版有该字段）
      平台层把 registerKill / 回合 cleanup 事件转发到此处。 ]]
 
 local S = {}
 
 function S.new()
-  return { kills = 0, deaths = 0, victories = 0, rounds = 0, selfKills = 0 }
+  return { kills = 0, deaths = 0, victories = 0, rounds = 0 }
 end
 
 -- byPlayer = 击杀者是否玩家
@@ -20,10 +19,6 @@ end
 
 function S.onDeath(s)
   s.deaths = s.deaths + 1
-end
-
-function S.onSelfKill(s)
-  s.selfKills = s.selfKills + 1
 end
 
 -- playerWon = 本回合结束时玩家是否存活

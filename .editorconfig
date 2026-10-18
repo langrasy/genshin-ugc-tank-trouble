@@ -23,5 +23,9 @@ indent_size = 2
 [*.{md,json}]
 indent_size = 2
 
+# Markdown 行尾两个空格 = 硬换行，禁止裁剪
+[*.md]
+trim_trailing_whitespace = false
+
 [*.yml]
 indent_size = 2

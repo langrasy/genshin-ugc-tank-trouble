@@ -23,6 +23,18 @@ local M = {}
 local cos, sin, sqrt, abs, floor, random = math.cos, math.sin, math.sqrt, math.abs, math.floor, math.random
 local PI, RAD = math.pi, math.pi / 180
 
+-- 角度归一化到 (-180, 180]。
+--   ⚠️ 关键：Flash 的 `_rotation` 由播放器**自动归一化**（写入 / 累加后读回必然落在 (-180,180]）；
+--   我们的 rot 只是普通数字，若不归一化会无限累加 —— 一旦 |rot| > 180，所有「按角度差判断转向」的代码
+--   （原版 AI 的 `abs(target-cur) > 180` / `< 360-turnSpeed` / `45..315` 等）全部失效 →
+--   AI 原地打转、朝错方向、撞墙。故每帧移动结束后必须归一化（见 attemptToMove）。
+local function normalizeRot(a)
+  a = a % 360
+  if a > 180 then a = a - 360 end
+  return a
+end
+M.normalizeRot = normalizeRot
+
 -- ============================================================
 -- 1. 权威尺寸（GameTank.swf 符号边界，单位：符号局部像素）
 -- ============================================================
@@ -83,7 +95,7 @@ function M.new(opts)
   local t = {
     x = opts.x or 0,
     y = opts.y or 0,
-    rot = opts.rot or 0,
+    rot = normalizeRot(opts.rot or 0),          -- 归一化（Flash _rotation 行为，见 normalizeRot）
     turnSpeed = 10,                          -- 第 367 行
     wallHit = opts.wallHit,
     mouseTank = opts.mouseTank or false,
@@ -98,6 +110,8 @@ function M.new(opts)
 end
 
 -- 武器切换导致炮塔尺寸变化时重算碰撞点（原版在 setWeapon 中重算）
+-- ⚠️ 有意的简化：原版**逐武器**的炮塔碰撞点各不相同（激光 8 点且按 /2.7、/2*1.2、/16*11.5、/16*9 摆位；
+-- homing / remote 为 5 点纯车头），本移植统一按「炮塔矩形」重算 —— 真机形状由平台 `TURRET_DIMS` 决定。
 function M.setTurretSize(t, tw, th)
   t.hitPoints = M.makeHitPoints(M.BASE_W, M.BASE_H, tw, th)
 end
@@ -279,6 +293,8 @@ function M.attemptToMove(t, forward, backup, turnLeft, turnRight)
       if anyHit(t) then t.rot = t.rot - (t.turnSpeed - offset) end
     end
   end
+  -- 归一化（Flash 的 _rotation 自动落在 (-180,180]；不归一化会让 AI 的角度判断失效，见 normalizeRot）
+  t.rot = normalizeRot(t.rot)
   t.hitSomething = hitSomething   -- AI 决策树读取（gameTank 第 67/98/109 行）
   return not hitSomething
 end
@@ -362,7 +378,8 @@ end
 --    原版 _rotation = floor(random*36)*10
 -- ============================================================
 function M.randomRotation()
-  return floor(random() * 36) * 10
+  -- 原版 _rotation = floor(random*36)*10（0..350）；Flash 会把它自动归一化（如 350 → -10），此处跟随。
+  return normalizeRot(floor(random() * 36) * 10)
 end
 
 return M

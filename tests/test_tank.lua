@@ -4,6 +4,7 @@ package.path = package.path .. ";./?.lua"
 
 local T = require("src.tank")
 
+---@noreturn
 local function fail(msg) print("[FAIL] " .. msg); os.exit(1) end
 local function ok(msg) print("[ok] " .. msg) end
 local function approx(a, b, eps) return math.abs(a - b) <= (eps or 1e-9) end
@@ -187,6 +188,76 @@ do
   T.stepMouse(t, 200, 0)
   assertApprox(t.rot, 90, 1e-6, "鼠标正右方 → rot=90")
   ok("旧鼠标操控：坦克瞬时对准鼠标（正右 → 90°）")
+end
+
+-- ============================================================
+-- 9b. 鼠标操控：新方案（限速转向 / 近距倒车）
+-- ============================================================
+do
+  -- 朝向未对齐：只限速转向（每帧 10°），不前进
+  local t = T.new{ x = 0, y = 0, rot = 0, cellScale = 50, wallHit = noWall,
+                   mouseTank = true, settingsUseNewMouseControl = true }
+  T.stepMouse(t, 200, 0)
+  assertApprox(t.rot, 10, 1e-6, "朝向偏差 90° 时每帧只转 10°")
+  assertApprox(t.x, 0, 1e-9, "未对齐时不前进（x）")
+  assertApprox(t.y, 0, 1e-9, "未对齐时不前进（y）")
+  ok("新鼠标操控：转向受 turnSpeed 限制（不瞬时对准）")
+
+  -- 朝向已对齐：前进
+  local t2 = T.new{ x = 0, y = 0, rot = 0, cellScale = 50, wallHit = noWall,
+                    mouseTank = true, settingsUseNewMouseControl = true }
+  T.stepMouse(t2, 0, -200)
+  assertApprox(t2.rot, 0, 1e-9, "朝向已对齐 → 不转向")
+  assertApprox(t2.y, -4, 1e-6, "朝向对齐且距离足够 → 前进 4px")
+  ok("新鼠标操控：朝向对齐后前进")
+
+  -- 鼠标在背后且很近（<120）：倒车
+  local t3 = T.new{ x = 0, y = 0, rot = 0, cellScale = 50, wallHit = noWall,
+                    mouseTank = true, settingsUseNewMouseControl = true }
+  T.stepMouse(t3, 0, 80)
+  assertApprox(t3.rot, 0, 1e-9, "倒车时不额外转向")
+  assertApprox(t3.y, 2.5, 1e-6, "鼠标近距在背后 → 倒车 2.5px")
+  ok("新鼠标操控：近距背向鼠标时倒车")
+end
+
+-- ============================================================
+-- 10. 朝向归一化（Flash `_rotation` 行为）
+--     Flash 播放器会把 `_rotation` 自动归一化到 (-180,180]；我们必须在每帧移动结束后同样归一化，
+--     否则 |rot| 无限累加，会让原版 AI 的「按角度差判断转向」全部失效（原地打转 / 撞墙）。
+-- ============================================================
+do
+  local t = T.new{ x = 0, y = 0, rot = 0, cellScale = 50, wallHit = noWall }
+  local maxAbs = 0
+  for _ = 1, 200 do
+    T.stepKeyboard(t, { turnRight = true })   -- 每帧 +10°，200 帧 = +2000°
+    if math.abs(t.rot) > maxAbs then maxAbs = math.abs(t.rot) end
+  end
+  if maxAbs > 180 then
+    fail(string.format("连续转向 200 帧后 |rot| 仍应 ≤180，实际最大 %.6f", maxAbs))
+  end
+  ok("连续转向 200 帧（累计 2000°）rot 仍归一化在 (-180,180]")
+end
+
+do
+  local t = T.new{ x = 0, y = 0, rot = 0, cellScale = 50, wallHit = noWall }
+  T.stepKeyboard(t, { turnLeft = true })
+  assertApprox(t.rot, -10, 1e-9, "从 0 左转一帧 → -10（不因取模变 350）")
+  local t2 = T.new{ x = 0, y = 0, rot = 0, cellScale = 50, wallHit = noWall }
+  for _ = 1, 18 do T.stepKeyboard(t2, { turnLeft = true }) end   -- -180
+  assertApprox(t2.rot, 180, 1e-9, "-180 归一化为 180（与 Flash 一致）")
+  local t3 = T.new{ x = 0, y = 0, rot = 350, cellScale = 50, wallHit = noWall }
+  assertApprox(t3.rot, -10, 1e-9, "初始 350 归一化为 -10")
+  ok("归一化边界正确（-180→180、350→-10）")
+end
+
+do
+  local bad = false
+  for _ = 1, 2000 do
+    local r = T.randomRotation()
+    if r <= -180 or r > 180 then bad = true; break end
+  end
+  if bad then fail("randomRotation 未归一化到 (-180,180]") end
+  ok("随机初始朝向也已归一化（原版 0..350 → Flash 读回 (-180,180]）")
 end
 
 print("\n全部通过。")

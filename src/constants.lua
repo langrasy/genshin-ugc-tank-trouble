@@ -3,6 +3,8 @@
   来源：反编译源码 frame_53/DoAction.as 尾部常量区（第 2297-2393 行）与 frame_1/DoAction.as 设置区。
   说明：所有数值照抄原版，未做任何"平衡性"改动。
         原版中随迷宫格子大小等比缩放的量（如 *_xscale）在移植层按 SCALE 换算，此处只保留基准常量。
+  约定：常量名与原版**逐字同名**，便于与 `机制与数值汇总.md` / 反编译源码逐条对照；
+        其中「原版有、本项目未实现或未绘制」的条目会就地标注 `⚠️未使用`（**保留以对齐原版，勿当死代码删**）。
 ]]
 
 local C = {}
@@ -71,7 +73,7 @@ C.REMOTELIFETIME           = 250
 C.REMOTEHITCHECKINTERVALS  = 5
 C.REMOTEDEADLY             = 0
 C.REMOTESMOKECLOUDS        = 5
-C.REMOTESIGNALSIZE         = 70
+C.REMOTESIGNALSIZE         = 70     -- ⚠️未使用：导弹与坦克之间的信号线长度（原版 rCSignal），本项目未绘制
 
 C.GATLINGSPEED             = 5.5
 C.GATLINGLIFETIME          = 125
@@ -90,9 +92,9 @@ C.CRATESPAWNMAZESIZESCALE  = 2000   -- 按可达格数补偿：+ 2000 / reachabl
 -- ============================================================
 -- 5. 爆炸 / 残骸 / 特效数量
 -- ============================================================
-C.NUMBEROFFRAGMENTS        = 8
+C.NUMBEROFFRAGMENTS        = 8      -- ⚠️未使用：坦克爆炸残骸（平台层改用近似造型 + 固定片数渲染）
 C.NUMBEROFSMOKECLOUDS      = 10
-C.NUMBEROFPUFFCLOUDS       = 0
+C.NUMBEROFPUFFCLOUDS       = 0      -- ⚠️未使用：原版即"默认关闭"（0），本项目不绘制箱体气团
 C.NUMBEROFDUSTCLOUDS       = 20
 C.NUMBEROFFRAMESBEFOREEND  = 125
 C.NUMBEROFFRAMESFROZEN     = 50
@@ -103,7 +105,7 @@ C.FRAGSMOKECLOUDS          = 10
 C.FRAGLEVELS               = 1
 
 -- ============================================================
--- 6. El Toro（蛮牛冲刺装备）
+-- 6. El Toro（蛮牛冲刺装备）—— ⚠️未使用：本项目未实现该装备，常量照抄原版保留
 -- ============================================================
 C.ELTOROCHARGETIME         = 10
 C.ELTOROSNORTTIME          = 5
@@ -114,7 +116,7 @@ C.ELTOROSIZE               = 5
 -- ============================================================
 -- 7. 护盾 / 震屏 / 死胡同
 -- ============================================================
-C.SHIELDSIZE               = 70
+C.SHIELDSIZE               = 70     -- ⚠️未使用：护盾装备未实现（原版 equipment "shield"）
 C.MAXSHAKE                 = 8
 C.MAXDEADENDPENALTY        = 5
 
@@ -127,34 +129,12 @@ C.SETTINGS = {
   maxBullets    = 5,      -- 普通弹同时在场上限
   maxCrates     = 3,      -- 场上补给箱上限
   crateSpawnModifier = 1,
+  -- ⚠️未使用：自定义迷宫数据源（原版 pixvi.net 拉取）未接入，本机只玩随机迷宫
   playRandomMazes    = true,
   playMyCustomMazes  = true,
   playOtherCustomMazes = false,
   useNewMouseControl = false,
   useSmoothCollision = true,
 }
-
--- ============================================================
--- 9. 键位（frame_53 deployTank：controlNum 0/1/2 三套）
---    Flash keyCode：W83 A65 S83? 原版为 D68 F70 E69 Q81 等，见下
--- ============================================================
--- 注意：原版直接写 keyCode 数字。此处保留原始键码，供平台层映射。
-C.CONTROL_SCHEMES = {
-  -- controlNum 0：方向键组（左 S83? 见原文：LEFT=83 FORWARD=69 TURNRIGHT=70 BACKUP=68 FIRE=81）
-  { turnLeft = 83, forward = 69, turnRight = 70, backup = 68, fire = 81, mouse = false },
-  -- controlNum 1：WASD 组（LEFT=37 FORWARD=38 TURNRIGHT=39 BACKUP=40 FIRE=77）
-  { turnLeft = 37, forward = 38, turnRight = 39, backup = 40, fire = 77, mouse = false },
-  -- controlNum 2：鼠标操控
-  { mouse = true },
-}
-
--- ============================================================
--- 10. 武器 / 装备名称集合（供逻辑分支复用）
--- ============================================================
-C.WEAPONS = {
-  "bullet", "laser", "frag", "gatling", "homing",
-  "mine", "remote", "deathRay", "elToro", "electric",
-}
-C.EQUIPMENTS = { "none", "aimer", "shield", "elToro" }
 
 return C

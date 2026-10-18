@@ -3,6 +3,7 @@ package.path = package.path .. ";./?.lua"
 
 local A = require("src.ach")
 
+---@noreturn
 local function fail(msg) print("[FAIL] " .. msg); os.exit(1) end
 local function ok(msg) print("[ok] " .. msg) end
 

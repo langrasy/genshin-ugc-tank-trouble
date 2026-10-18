@@ -60,15 +60,13 @@ end
 -- createMaze(xsize, ysize)  —— frame_53 第 1-45 行
 -- rng：可选，返回 [0,1) 的函数；默认 math.random
 -- ============================================================
-function M.createMaze(xsize, ysize, rng)
-  rng = rng or math.random
-
-  -- tempmaze[x][y]，x∈[0,xsize]，y∈[0,ysize]，随机 0..3
+-- 共用构建：cellAt(x,y) 返回该**格点**的 0..3 取值（tempmaze）。
+local function buildMaze(xsize, ysize, cellAt)
   local tempmaze = {}
   for x = 0, xsize do
     local col = {}
     for y = 0, ysize do
-      col[y] = floor(rng() * 4)
+      col[y] = (cellAt(x, y) or 0) % 4
     end
     tempmaze[x] = col
   end
@@ -84,6 +82,45 @@ function M.createMaze(xsize, ysize, rng)
     maze[x] = col
   end
   return M.wrap(maze)
+end
+
+function M.createMaze(xsize, ysize, rng)
+  rng = rng or math.random
+  return buildMaze(xsize, ysize, function() return floor(rng() * 4) end)
+end
+
+-- makeEntropyInts(xsize, ysize, rng) —— 摇出 (xsize+1)*(ysize+1) 个 0..3 的格点熵。
+--   取用顺序与 createMaze/buildMaze **完全一致**（x 外层、y 内层）⇒
+--   `createMazeFromInts(W, H, makeEntropyInts(W, H, rng), 1)` 与 `createMaze(W, H, rng)` 逐格等价。
+--   用途（联机「房主上传」方案）：房主先摇出整数表（可原样发给其他玩家），再用它建同一张图。
+function M.makeEntropyInts(xsize, ysize, rng)
+  rng = rng or math.random
+  local ints = {}
+  local i = 0
+  for x = 0, xsize do
+    for y = 0, ysize do
+      i = i + 1
+      ints[i] = floor(rng() * 4)
+    end
+  end
+  return ints
+end
+
+-- createMazeFromInts(xsize, ysize, ints, i0)  —— 联机：从**外部下发的整数表**建迷宫。
+--   ints[i0 .. i0 + (xsize+1)*(ysize+1) - 1] 为每个格点的 0..3 取值。
+--   现行方案（「房主上传」）：表由**联机房主**摇好后经服务器下发；旧方案（服务器摇）已被弃用。
+--   纯整数、**按下标顺序取用** ⇒ 两端结果必然一致（无 PRNG 状态 / 无消耗漂移）。
+--   返回 maze, 消耗的元素个数；数据不足返回 nil, 0。
+function M.createMazeFromInts(xsize, ysize, ints, i0)
+  local i = i0 or 1
+  local need = (xsize + 1) * (ysize + 1)
+  if type(ints) ~= "table" or #ints < i - 1 + need then return nil, 0 end
+  local maze = buildMaze(xsize, ysize, function()
+    local v = ints[i] or 0
+    i = i + 1
+    return v
+  end)
+  return maze, need
 end
 
 -- ============================================================
@@ -321,11 +358,6 @@ function M.getShortestPathWithDistances(maze, distances, startx, starty, endx, e
   return out
 end
 
-function M.getShortestPath(maze, startx, starty, endx, endy)
-  local d = M.calcDistances(maze, startx, starty)
-  return M.getShortestPathWithDistances(maze, d, startx, starty, endx, endy)
-end
-
 -- ============================================================
 -- 像素级墙体判定 —— 等价原版 _root.game.mazemc.hitTest(px,py,true)
 -- frame_53 第 601、646-699 行：
@@ -385,82 +417,6 @@ function M.makeWallTester(maze, scale)
     end
     return false
   end
-end
-
--- ============================================================
--- optimizeShortestPath(maze, path) —— 第 346-360 行（原地修改）
--- ============================================================
-function M.optimizeShortestPath(maze, path)
-  local p2 = table.remove(path)   -- path.pop()
-  local p3 = table.remove(path)   -- path.pop()
-  local p4 = path[#path]          -- path[path.length-1]
-  if M.checkClearPath(maze, p4, p2) then
-    path[#path + 1] = p2
-  else
-    path[#path + 1] = p3
-    path[#path + 1] = p2
-  end
-end
-
--- ============================================================
--- checkClearPath(maze, start, end) —— 第 361-434 行
--- 射线步进判断两点间是否直线可达
--- ============================================================
-function M.checkClearPath(maze, startP, endP)
-  local W, H = maze.W, maze.H
-  local dx = endP.x - startP.x
-  local dy = endP.y - startP.y
-  local len = sqrt(dx * dx + dy * dy)
-  local ux = dx / len
-  local uy = dy / len
-  local fx = startP.x + 0.5
-  local fy = startP.y + 0.5
-  local cx = floor(fx)
-  local cy = floor(fy)
-
-  while cx ~= endP.x or cy ~= endP.y do
-    if ux < 0 and uy > 0 and cx > endP.x and cy < endP.y then
-      if not (maze[cx][cy].yw == 0 and maze[cx][cy].xw == 0 and maze[cx - 1][cy].yw == 0 and maze[cx][cy + 1].xw == 0
-              and cx > 0 and cy < H - 1) then
-        return false
-      end
-    end
-    if ux > 0 and uy > 0 and cx < endP.x and cy < endP.y then
-      if not (maze[cx][cy].yw == 0 and maze[cx + 1][cy].xw == 0 and maze[cx + 1][cy].yw == 0 and maze[cx + 1][cy + 1].xw == 0
-              and cx < W - 1 and cy < H - 1) then
-        return false
-      end
-    end
-    if ux < 0 and uy < 0 and cx > endP.x and cy > endP.y then
-      if not (maze[cx][cy].xw == 0 and maze[cx][cy - 1].yw == 0 and maze[cx][cy - 1].xw == 0 and maze[cx - 1][cy - 1].yw == 0
-              and cx > 0 and cy > 0) then
-        return false
-      end
-    end
-    if ux > 0 and uy < 0 and cx < endP.x and cy > endP.y then
-      if not (maze[cx + 1][cy].xw == 0 and maze[cx][cy - 1].yw == 0 and maze[cx + 1][cy - 1].yw == 0 and maze[cx + 1][cy - 1].xw == 0
-              and cx < W - 1 and cy > 0) then
-        return false
-      end
-    end
-    if ux < 0 and uy == 0 then
-      if not (maze[cx][cy].xw == 0 and cx > 0) then return false end
-    end
-    if ux > 0 and uy == 0 then
-      if not (maze[cx + 1][cy].xw == 0 and cx < W - 1) then return false end
-    end
-    if ux == 0 and uy < 0 then
-      if not (maze[cx][cy - 1].yw == 0 and cy > 0) then return false end
-    end
-    if ux == 0 and uy > 0 then
-      if not (maze[cx][cy].yw == 0 and cy < H - 1) then return false end
-    end
-    fx = fx + ux
-    fy = fy + uy
-    cx = floor(fx)
-    cy = floor(fy)
-  end
-  return true
 end
 
 -- ============================================================
