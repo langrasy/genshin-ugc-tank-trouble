@@ -18,11 +18,17 @@ reference/
 # 千星奇域官方文档离线归档（体积大，仅本地查阅，不入库）
 docs/ugc_official/
 
-# Trae 生成的分发打包目录（工具产物，不参与构建）
+# 编辑器分发的打包目录（工具产物，不参与构建）
 .trae-html-share-packages/
 
 # 编辑器 / 本地索引配置（不入库）
 .trae/
+
+# 本地工作笔记（不入库）
+AGENTS.md
+CLAUDE.md
+DEV_STATE.md
+CHANGELOG.md
 
 # 操作系统噪声
 Thumbs.db

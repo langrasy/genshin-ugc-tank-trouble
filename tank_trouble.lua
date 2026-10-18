@@ -4706,7 +4706,7 @@ G = {
   -- 显示设置（「设置」面板可调；平台无存储 API ⇒ 每次进游戏回默认值：缩放=自适应、抗锯齿=CFG.AA_WIDTH）
   uiScale = 1, uiScaleMode = 1, aaWidth = CFG.AA_WIDTH,
   -- 联机标志（**联机功能落地后置 true**）：联机对局**禁止以任何形式暂停 / 打开设置面板**，
-  --   也禁止中途退出（规则性设置只能在「准备阶段」改，见 DEV_STATE）。
+  --   也禁止中途退出（规则性设置只能在「准备阶段」改）。
   online = false,
   -- 对战设置（原版 _root.settingsXXX，见 reference/.../frame_1/DoAction.as L393-401）
   --   单机：设置面板 →「对战设置」可调；联机：禁止（规则性设置只能在准备阶段改）。
@@ -4758,7 +4758,7 @@ G = {
   },
   -- 鼠标坦克（原版第 3 台）输入：开火 = 鼠标左键，其余由光标位置驱动（见 tankFrame）。
   pmouse = { fire = false },
-  -- 触屏（移动端）：设备判定 + 触点状态（画布中心为原点、y 向上）。见 DEV_STATE §10.5 / §6.20 / §6.23。
+  -- 触屏（移动端）：设备判定 + 触点状态（画布中心为原点、y 向上）。
   touchMode = false,
   touch = { x = 0, y = 0, ok = false, down = false },   -- 指针（菜单用；取最近一次触点）
   touches = {},                                          -- [touchId] = { x, y }（多指，游戏内操作用）
@@ -5994,7 +5994,7 @@ end
 
 -- ⚠️ 补给箱的三个联机辅助（`MENU.spawnCrateAt` / `MENU.uploadCrates` / `MENU.syncCrateMirror`）
 --   挂在 `MENU` 表上、定义在 `MENU` 表字面量之后 —— 顶层 local 每多一个都要计入主 chunk 上限
---   （见 AGENTS.md §0），故此处不新开 local。
+--   （真机 Lua 5.3 上限 200），故此处不新开 local。
 -- **只有房主（或单机）** 会调它：本地随机刷箱。联机时**房主是补给箱的唯一权威**。
 local function trySpawnCrate()
   local pos = roundApi.pickCratePos(ctx)
@@ -6578,7 +6578,7 @@ local function updateScope()
 end
 
 -- ============================================================
--- ⑫.5 触屏游戏内操控（移动端，见 DEV_STATE §10.5 / §6.23）
+-- ⑫.5 触屏游戏内操控（移动端）
 --   分区：单人 = 左半屏摇杆 + 右半屏开火；双人 = 四象限（左上 1P 摇杆 / 左下 1P 开火 /
 --         右下 2P 摇杆 / 右上 2P 开火）。三人触屏不可用（见菜单）。
 --   手感：pad = 8 向布尔（同键鼠 1P/2P）；aim = 方向即朝向（同键鼠 3P，接 stepMouse 旧分支）。
@@ -7801,7 +7801,7 @@ MENU = {
 --   **只有「单人玩家」的横幅内有 1 行副标题**（「电脑对战」），其余 3 个横幅只有 1 行主标题；
 --   每个模式下方悬挂的灰色说明框内容 = 下表 `desc`（原版是悬停才从上方滑入的 help 框）。
 -- 注意：前 3 项顺序不可变（冒烟测试按序号选中单人 / 三人）。
--- 全部挂到 MENU 字段上（本文件级 local 已达 Lua 200 上限，见 DEV_STATE §7）。
+-- 全部挂到 MENU 字段上（本文件级 local 已达 Lua 200 上限）。
 MENU.MODES = {
   { id = "solo",  title = "单人玩家",      sub = "电脑对战", desc = "对战电脑控制的 机械恶犬坦克" },
   { id = "duo",   title = "双人对战",                    desc = "两个玩家之间的对抗" },
@@ -8520,7 +8520,7 @@ local onMenuKey     -- 前向声明：stepMenuInput 里「点返回按钮」要�
 
 -- 结束本场对局并给出结算提示（用户结算规则）。
 --   winnerIdx = 胜者坦克下标；nil = 平局。
---   单机：打完任意一场（走到这里）即视为「已完成」；联机：一方胜利、另一方失败（见 DEV_STATE）。
+--   单机：打完任意一场（走到这里）即视为「已完成」；联机：一方胜利、另一方失败。
 MENU.finishMatch = function(winnerIdx)
   local m = G.match
   if m == nil or m.over then return end
@@ -8577,7 +8577,7 @@ end
 --   补给箱是**持续状态**（一直在场上直到被捡）⇒ 必须走变量（丢包自愈 / 重连恢复），
 --   不能走一次性信号。表结构 = [crateId, cellX, cellY, weaponId] × N；
 --   用**格子坐标**（不是像素）⇒ 与 SCALE 无关，两端必然落在同一格。
--- ⚠️ 这三个函数挂在 `MENU` 表上而不是顶层 local：顶层 local 要计入主 chunk 上限（AGENTS.md §0）。
+-- ⚠️ 这三个函数挂在 `MENU` 表上而不是顶层 local：顶层 local 要计入主 chunk 上限（真机 Lua 5.3 上限 200）。
 -- ============================================================
 
 -- 造一个补给箱（**房主本地生成** 与 **非房主照表镜像** 共用同一段）
@@ -8733,7 +8733,7 @@ local function buildMenuUI()
   MENU.menuTexts[2] = makeTextAt(0, -244, 860, 20, "", Enum.TextHorizontalAlignment.Middle)
 
   -- 4 个模式横幅（原版 DefineSprite_340/351/356/328）：静态形状层 + 主 / 副标题笔画字。
-  -- 触屏端不支持三人对战：横幅变灰 + 说明「不可用」（见 DEV_STATE §10.5）。
+  -- 触屏端不支持三人对战：横幅变灰 + 说明「不可用」。
   if G.touchMode then MENU.MODES[3].desc = "触屏端不可用" end
   for i = 1, #MENU.MODES do
     local m = MENU.MODES[i]
@@ -9306,7 +9306,7 @@ local refreshDevRows
 -- 设置面板文本刷新（前向声明，供 refreshMenu / toggleSound 引用）
 local refreshSetRows
 -- 对战设置 / 其他设置页刷新挂在 MENU 上（MENU.refreshRulesRows / MENU.refreshOtherRows），
--- 以避免再增主 chunk 的顶层 local（真机 Lua 5.3 上限 200，见 AGENTS.md）
+-- 以避免再增主 chunk 的顶层 local（真机 Lua 5.3 上限 200）
 
 refreshMenu = function()
   local p = MENU.phase
@@ -10133,7 +10133,7 @@ end
 
 -- 联机判定：由服务器节点图把「在场玩家数」写入**关卡自定义变量** TT2_PLAYERS；
 --   客户端读 ≥2 ⇒ G.online = true ⇒ 进游戏直接进准备界面、启用颜色选择 / 30 秒倒计时 / 3 秒开始、
---   禁用空格暂停与右下角菜单按钮（见 DEV_STATE §6.35 与「联机节点图接线清单.md」）。
+--   禁用空格暂停与右下角菜单按钮（见「联机节点图接线清单.md」）。
 --   · **快速预览**（无需节点图）：在编辑器把 TT2_PLAYERS 初始值设为 2，即可本地预览联机界面。
 --   · 真实测试：节点图在玩家进入/离开时用「获取在场玩家实体列表」+「列表迭代循环」计数后「设置自定义变量」。
 --   注意：本段必须在 `beginReady` 之后（下面会调用它）。
@@ -11278,7 +11278,7 @@ registerKill = function(victim, source)
 end
 
 -- ============================================================
--- ⑯.5 触屏输入层（移动端，见 DEV_STATE §10.5 / §6.20）
+-- ⑯.5 触屏输入层（移动端）
 --   移动端没有键鼠：实例化一个全屏透明 CursorEventArea，把触点转成
 --   「画布中心为原点、y 向上」的坐标写进 G.touch，并作为**指针**接入菜单逻辑
 --   （菜单的悬停选中 / 左键确认 / 子页选行本就走鼠标路径，故触屏可直接复用）。

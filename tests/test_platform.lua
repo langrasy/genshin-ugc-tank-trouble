@@ -262,7 +262,7 @@ check("注册了移动 / 开火按键监听", next(listeners) ~= nil,
   "共 " .. tostring((function() local n = 0 for _ in pairs(listeners) do n = n + 1 end return n end)()) .. " 个事件")
 
 -- 触屏输入层（移动端）：应实例化 1 个 CursorEventArea 并注册 3 个触点事件，
--- 且用假 CursorEventData 驱动回调不报错（仅验证桩件通路，真机行为另见 DEV_STATE §6.20）。
+-- 且用假 CursorEventData 驱动回调不报错（仅验证桩件通路）。
 -- ⚠️ 取**最后一个**：模板自检（selfCheckPrefabs）也会实例化一次 CURSOR_AREA 探针并立刻销毁。
 local probeArea = cursorAreas[#cursorAreas]
 check("触屏输入：CursorEventArea 已实例化", probeArea ~= nil, "共 " .. #cursorAreas .. " 个")
@@ -298,7 +298,7 @@ check("开局停在主菜单（未自动开局）", roundLogs == 0, "新回合�
 ---@type any
 local DBG = __TT_DEBUG or {}
 -- 触屏输入层断言已过：后续流程改按「桌面端」跑 —— 触屏端「三人对战」不可用、且设置面板的行不同
--- （控制方式 / 按键设置 → 控制模式），桩件只覆盖一条设备分支；移动端差异在真机验证。见 DEV_STATE §6.23。
+-- （控制方式 / 按键设置 → 控制模式），桩件只覆盖一条设备分支；移动端差异需真机验证。
 if DBG.G ~= nil then DBG.G.touchMode = false end
 local MENU_L, HUD_L = DBG.MENU, DBG.hud
 local titleLabel = MENU_L and MENU_L.menuTexts and MENU_L.menuTexts[1]
