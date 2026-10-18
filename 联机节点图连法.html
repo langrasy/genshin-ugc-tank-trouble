@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>坦克动荡 2 · 联机服务器节点图（定稿 v6 · 共 13 张）</title>
+<style>
+  :root{
+    --bg:#12151b; --panel:#191d24; --line:#2b313c; --txt:#d7dbe4; --dim:#8fa1bd; --key:#7cc0ff;
+    --ev:#e8385c; --ex:#6fae3a; --flow:#c98a2e; --q:#4a6fa5; --op:#7b5ea7; --sv:#2e8b8b;
+    --exec:#dfe4ee; --data:#6ea8fe; --warn:#ff7a8a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:34px 26px 90px;background:var(--bg);color:var(--txt);
+       font:14px/1.75 "PingFang SC","Microsoft YaHei",system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:1280px;margin:0 auto}
+  h1{font-size:24px;margin:0 0 6px;letter-spacing:.3px}
+  h2{font-size:16px;margin:0 0 6px}
+  .lead{color:var(--dim);margin:0 0 24px}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 18px 12px;margin:0 0 22px}
+  section.g{padding:16px 18px 8px}
+  .desc{color:var(--dim);margin:2px 0 12px}
+  .banner{color:#ffd7dd;background:#3a1620;border:1px solid #7d2438;border-radius:8px;
+          padding:9px 12px;margin:2px 0 12px;font-weight:600}
+  svg{display:block;width:100%;height:auto;margin:4px 0 2px}
+  table{border-collapse:collapse;width:100%;margin:8px 0 14px;font-size:13px}
+  th,td{border:1px solid var(--line);padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#20252e;color:var(--dim);font-weight:500}
+  code{background:#0f1319;border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:var(--key);font-size:12.5px}
+  .legend{display:flex;flex-wrap:wrap;gap:9px 20px;align-items:center;color:var(--dim);font-size:13px;margin:8px 0 4px}
+  .legend i{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:6px}
+  .legend .ln{display:inline-block;width:26px;height:0;border-top:2px solid var(--exec);vertical-align:4px;margin-right:6px}
+  .legend .ln.d{border-top:2px solid var(--data)}
+  .steps{margin:6px 0 6px;padding-left:20px}
+  .steps li{margin:2px 0}
+  .w{color:#ffcf6b}
+  .r{color:var(--warn)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>坦克动荡 2 · 联机服务器节点图（定稿 v6 · 共 13 张）</h1>
+<p class="lead">全部 13 张服务器节点图逐张画全：节点、参数行、针脚、连线。连线端点均由针脚坐标计算得出（非手写）。
+所有图都挂在<b>关卡实体</b>上。接线清单见仓库根目录 <code>联机节点图接线清单.md</code>。
+<b class="w">v4 变更：房主权威模型</b> ——
+① 迷宫表<b>首项加 <code>seq</code> 回合号</b>，回合由房主驱动（非房主读到新 seq 才重开一回合）；
+② 快照<b>按槽位拆成两个信号 / 两个变量</b>（<code>TT2_SNAP_1</code> / <code>TT2_SNAP_2</code>）—— 共用一个变量会被两端互相覆盖；
+③ 新增 <b>补给箱</b>（<code>TT2_CRATE</code>）与 <b>胜负</b>（<code>TT2_WINNER</code>）两条「房主权威、走变量」的状态通道。
+<b class="w">v5 变更：准备界面</b> ——
+④ 新增<b>准备档</b>（<code>TT2_READY_1</code> / <code>TT2_READY_2</code>，同样是「按槽位拆两个」）：让对面知道
+「我准备了吗 / 选了什么颜色 / 我用什么设备」，并由<b>房主在其中发布「强制准备时刻」</b>（= 届时 <code>TT2_BEAT</code> 的值）
+⇒ 两端的 30 秒倒计时<b>逐秒一致</b>、到点同时强制准备、同时进 3 秒开始倒计时。
+<b class="w">v6 变更：结算（退出也算已完成 / 联机离开即逃跑 / 分出胜负立刻结算）</b> ——
+⑤ 新增 <b>C10 结算状态</b>（<b>图 13 · 三条链</b>，<code>TT2_SET_WIN</code> / <code>TT2_SET_LOSE</code> / <code>TT2_SET_ESCAPE</code>）：
+客户端把<b>本机玩家的结算状态</b>报给服务器（三个信号各带 <b>1 个整数参数 = 我的玩家序号</b>）。
+<b class="r">⚠️ 不能靠「信号来源实体」</b>——官方《信号》文档说信号是<b>全局广播</b>，而「信号来源实体」的定义是
+「<b>使用【发送信号】节点</b>发送该信号的实体」；我们的信号由 <b>Lua 客户端</b>发出、<b>没有发送实体</b> ⇒
+它大概率是空，接上去等于什么都没设（实测：结算显示「未完成」）。故改由参数自报序号，
+服务器侧用 <code>根据玩家序号获取玩家GUID → 以GUID查询实体</code> 定位玩家（详见 <b>图 13</b> 的说明）。
+规则（用户 2026-10-15 定、2026-10-16 修订）：
+<b>单机</b>任意玩一局、无论模式与输赢，<b>之后以任意方式退出关卡</b>都算已完成（开赛预置「胜利」）；
+<b>联机</b><b>中途离开者判「逃跑」</b>、留下的一方判「胜利」（进局就把「逃跑合法性」预置成<b>否</b>），
+正常打完则按比赛规则判胜负（<b>领先 ≥ 10 分者胜</b>；时间到分高者胜；<b>同分进 1 分钟加时后分高者胜</b>），
+分出胜负时<b>各端各自</b>把自己最终状态报上来（赢发 WIN、输发 LOSE）。
+⑥ 新增 <b>C11 立刻结算</b>（<b>图 14</b>，<code>TT2_SETTLE</code>）：联机分出胜负后，<b>各端先报状态、等约 1.6 秒、再由房主</b>发
+⇒ 服务器调<b>【结算关卡】立刻结束本局</b>（这正是唯一该接【结算关卡】的地方）。
+背后的官方依据：《试玩》§3「主动退出也会触发关卡结算」+《关卡结算》二「状态可动态改、结算取当时值」+「未定」是默认状态
+（⚠️「胜利与失败都算已完成」是推论，官方无此原句；见 `联机节点图接线清单.md` §5.1）。
+⚠️ <b>图 13 的三条链都不要接【结算关卡】</b>（那会立刻结束整局）；单机<b>不主动结束本局</b>，退出时由平台落账。
+服务器侧<b>不算任何随机数、也不做任何判定</b>，只把房主的上行原样写进关卡变量。</p>
+
+<section>
+  <h2>图例</h2>
+  <div class="legend">
+    <span><i style="background:var(--ev)"></i>事件节点（只有 ▷ 执行出口）</span>
+    <span><i style="background:var(--ex)"></i>执行节点（左 ▷ 入、右 ▷ 出）</span>
+    <span><i style="background:var(--flow)"></i>流程控制（双分支）</span>
+    <span><i style="background:var(--q)"></i>查询节点（只有 ○，无 ▷）</span>
+    <span><i style="background:var(--op)"></i>运算节点（只有 ○，无 ▷）</span>
+    <span><i style="background:var(--sv)"></i>设置自定义变量 / 设置节点图变量</span>
+    <span><i class="ln"></i>执行线（▷ → ▷）</span>
+    <span><i class="ln d"></i>数据线（○ → ○）</span>
+  </div>
+  <p style="color:var(--dim);margin:12px 0 4px">
+    <b class="r">⚠️ 查询 / 运算节点没有执行口</b>：永远不要用执行线去连它，只能用数据线拉它的出参。
+    <br><b class="w">⚠️ 「循环体」「循环完成」（双分支为「是」「否」）是两个不同的 ▷ 执行出口</b>，别只连数据线。
+    <br><b class="w">v4 变更</b>：原 v3 的 C4「单快照变量」拆成 <b>C4a / C4b</b> 两组（槽位 1 / 槽位 2），
+    并<b>新增</b> C7 补给箱落地组、C8 胜负落地组（都只有 3 个节点，形状与图 4 完全同构）。
+    <br><b class="w">v5 变更</b>：<b>新增</b> C9a / C9b 准备档落地组（图 11 / 图 12，形状同样与图 4 同构）。
+    <br><b class="w">v6 变更</b>：<b>新增</b> C10 结算状态预置（图 13）：两条链
+    <code>监听 TT2_SET_WIN ▷ 设置玩家结算成功状态(…, 胜利)</code> /
+    <code>监听 TT2_SET_LOSE ▷ 设置玩家结算成功状态(…, 失败)</code>（各再接一根「设置玩家逃跑合法性 = 是」）——
+    让<b>中途 ESC 退出</b>也按预置的「胜利 / 失败」结算，而不是默认的「未定」。
+  </p>
+</section>
+
+<section>
+  <h2>⚠️ 搭图前必查：两类<b>图级资源</b>（<b class="r">先建后引用</b>）</h2>
+  <p class="desc">节点上的「变量名 / 信号名」栏只是<b>引用</b>，被引用的东西必须<b>先在别处建好</b>。
+  ⚠️ 只填名字、不建资源<b class="r">不一定会给红点</b>（<code>获取节点图变量</code> 官方释义「如果变量不存在，则返回类型的默认值」）⇒ 会<b class="r">静默失效</b>。建图前先把下表两样建齐。
+  <br><b class="w">本关一共要建三样：14 个信号 + 9 个关卡变量 + 14 张节点图</b>
+  （<code>TT2_HELLO</code> <b>不用建</b>：客户端在未建该信号时会安全跳过）。建完之后<b>按图 1 → 图 14 的顺序画</b>即可，
+  其中<b>图 3（C2 槽位）必须先通</b>，否则两端都不认房主。</p>
+  <table>
+    <tr><th>类别</th><th>建在哪</th><th>名字</th><th>类型 / 参数</th><th>用在哪</th></tr>
+    <tr><td rowspan="15"><b>信号</b></td><td rowspan="15">千星沙箱 → <b>信号管理器</b>（全局）</td><td><code>TT2_MAZE_UP</code></td><td><b>整数列表</b></td><td>C3 迷宫表上传（房主 → 服务器）</td></tr>
+    <tr><td><code>TT2_CRATE_UP</code></td><td><b>整数列表</b></td><td>C7 补给箱表上传（房主 → 服务器）</td></tr>
+    <tr><td><code>TT2_MATCH_UP</code></td><td><b>整数</b></td><td>C8 胜者槽位上传（房主 → 服务器）</td></tr>
+    <tr><td><code>TT2_SNAP_1</code></td><td>整数列表</td><td>C4a 槽位 1 快照</td></tr>
+    <tr><td><code>TT2_SNAP_2</code></td><td>整数列表</td><td>C4b 槽位 2 快照</td></tr>
+    <tr><td><code>TT2_READY_1</code></td><td><b>整数列表</b></td><td>C9a 槽位 1 准备档（含房主的「强制准备时刻」endBeat）</td></tr>
+    <tr><td><code>TT2_READY_2</code></td><td><b>整数列表</b></td><td>C9b 槽位 2 准备档</td></tr>
+    <tr><td><code>TT2_EVENT</code></td><td>整数列表</td><td>C5 事件</td></tr>
+    <tr><td><code>TT2_PING</code></td><td>浮点数</td><td>C6 延迟</td></tr>
+    <tr><td><code>TT2_SLOT</code></td><td>整数</td><td>C2 槽位</td></tr>
+    <tr><td><code>TT2_SET_WIN</code></td><td><b>1 个整数</b>（我的玩家序号）</td><td><b>C10</b> 把「参数_1 指定的玩家」置「<b>胜利</b>」（单机进局 / 联机我赢；<b class="r">不结束游戏</b>）</td></tr>
+    <tr><td><code>TT2_SET_LOSE</code></td><td><b>1 个整数</b>（我的玩家序号）</td><td><b>C10</b> 把「参数_1 指定的玩家」置「<b>失败</b>」（联机我输）</td></tr>
+    <tr><td><code>TT2_SET_ESCAPE</code></td><td><b>1 个整数</b>（我的玩家序号）</td><td><b>C10</b> 把「参数_1 指定的玩家」的<b>逃跑合法性设为「否」</b>（联机进局预置 ⇒ 中途离开即判「逃跑」）</td></tr>
+    <tr><td><code>TT2_SETTLE</code></td><td>无</td><td><b>C11</b> 请求服务器<b>立刻【结算关卡】</b>（联机分出胜负后由房主发，图 14）</td></tr>
+    <tr><td colspan="2" style="color:var(--dim)">（<code>TT2_HELLO</code> <b>不用建</b>；探针 <code>TT2_PROBE*</code> 已随客户端探针一并删除，<b>不用建</b>）</td></tr>
+    <tr><td rowspan="9"><b>关卡自定义变量</b></td><td rowspan="9">关卡设置 → 自定义变量（实体类型＝<b>关卡</b>）</td><td><code>TT2_BEAT</code></td><td>整数</td><td>C0/C1 写、客户端读</td></tr>
+    <tr><td><code>TT2_PLAYERS</code></td><td>整数</td><td>C1 写、客户端<b>联机判据</b></td></tr>
+    <tr><td><code>TT2_MAZE</code></td><td>整数列表</td><td>C3 写（首项 = <b>seq</b>）、客户端读</td></tr>
+    <tr><td><code>TT2_CRATE</code></td><td>整数列表</td><td>C7 写、客户端读（非房主镜像）</td></tr>
+    <tr><td><code>TT2_WINNER</code></td><td>整数</td><td>C8 写、客户端读（0 = 未结束）</td></tr>
+    <tr><td><code>TT2_SNAP_1</code></td><td>整数列表</td><td>C4a 写、客户端读（<b>对方</b>槽位）</td></tr>
+    <tr><td><code>TT2_SNAP_2</code></td><td>整数列表</td><td>C4b 写、客户端读（<b>对方</b>槽位）</td></tr>
+    <tr><td><code>TT2_READY_1</code></td><td>整数列表</td><td>C9a 写、客户端读（准备档 / 房主的「强制准备时刻」endBeat）</td></tr>
+    <tr><td><code>TT2_READY_2</code></td><td>整数列表</td><td>C9b 写、客户端读（对方准备档）</td></tr>
+  </table>
+  <p style="color:var(--dim);margin:12px 0 4px">
+    <b>对照：用了哪个节点 ⇒ 必须先建什么</b><br>
+    ① 用 <code>设置自定义变量</code>（目标＝关卡实体）⇒ 先在<b>关卡设置</b>里建同名关卡变量；<br>
+    ② 用 <code>监听信号</code>／<code>发送客户端脚本信号</code> ⇒ 先在<b>信号管理器</b>建同名信号并<b>声明参数</b>（参数名保持默认 <code>参数_1</code>… 别改）；<br>
+    ③ 用 <code>获取/设置节点图变量</code> ⇒ 先在该张图的<b>节点图变量页签</b>建同名变量。
+    <b class="w">v4 全程不使用节点图变量</b>（原 <code>MAZE_DONE</code> 哨兵已随迷宫组删除）⇒ 本页第 ③ 条本项目用不到。
+  </p>
+</section>
+
+<section>
+  <h2>信号表（在「信号管理器」建 <b>14 个</b>；名字 / 参数错一个都不通）</h2>
+  <table>
+    <tr><th>信号名</th><th>参数</th><th>方向</th><th>用途</th></tr>
+    <tr><td><code>TT2_MAZE_UP</code></td><td><b>整数列表</b></td><td>客户端（房主）→ 服务器</td><td><b>整张迷宫表上行</b>（服务器把它原样写进关卡变量 <code>TT2_MAZE</code>）</td></tr>
+    <tr><td><code>TT2_CRATE_UP</code></td><td><b>整数列表</b></td><td>客户端（房主）→ 服务器</td><td><b>整张补给箱表上行</b>（服务器原样写进 <code>TT2_CRATE</code>）</td></tr>
+    <tr><td><code>TT2_MATCH_UP</code></td><td><b>整数</b></td><td>客户端（房主）→ 服务器</td><td><b>本局胜者槽位</b>（服务器原样写进 <code>TT2_WINNER</code>）</td></tr>
+    <tr><td><code>TT2_SNAP_1</code></td><td>整数列表</td><td>客户端（槽位 1）→ 服务器</td><td>槽位 1 的位置快照（下行走同名关卡变量）</td></tr>
+    <tr><td><code>TT2_SNAP_2</code></td><td>整数列表</td><td>客户端（槽位 2）→ 服务器</td><td><b class="r">必须分两个</b>：共用一个变量会被两端互相覆盖</td></tr>
+    <tr><td><code>TT2_READY_1</code></td><td><b>整数列表</b></td><td>客户端（槽位 1）→ 服务器</td><td>槽位 1 准备档 <code>[ready,color,ctrl,endBeat]</code>（服务器原样写进 <code>TT2_READY_1</code>）</td></tr>
+    <tr><td><code>TT2_READY_2</code></td><td><b>整数列表</b></td><td>客户端（槽位 2）→ 服务器</td><td>槽位 2 准备档（同样<b class="r">必须分两个</b>）</td></tr>
+    <tr><td><code>TT2_EVENT</code></td><td>整数列表</td><td>双向</td><td>离散事件（开火/命中/拾取/阵亡/布雷）</td></tr>
+    <tr><td><code>TT2_PING</code></td><td>浮点数</td><td>上行 + 回发</td><td>延迟测量</td></tr>
+    <tr><td><code>TT2_SLOT</code></td><td>整数</td><td>服务器 → 客户端</td><td>告知「我是几号玩家」</td></tr>
+    <tr><td><code>TT2_HELLO</code></td><td>无</td><td>客户端 → 服务器</td><td style="color:var(--dim)"><b>不用建</b>（客户端未建该信号时会安全跳过）</td></tr>
+    <tr><td><code>TT2_SET_WIN</code></td><td><b>1 个整数</b>（我的玩家序号）</td><td>客户端 → 服务器</td><td><b>把「参数_1」那个玩家置「胜利」</b>（单机进局预置；联机自己赢时）—— 图 13</td></tr>
+    <tr><td><code>TT2_SET_LOSE</code></td><td><b>1 个整数</b>（我的玩家序号）</td><td>客户端 → 服务器</td><td><b>把「参数_1」那个玩家置「失败」</b>（联机自己输时）—— 图 13</td></tr>
+    <tr><td><code>TT2_SET_ESCAPE</code></td><td><b>1 个整数</b>（我的玩家序号）</td><td>客户端 → 服务器</td><td><b>把「参数_1」那个玩家的逃跑合法性设为「否」</b>（<b>联机进局预置</b>：中途离开即判「逃跑」）—— 图 13</td></tr>
+    <tr><td><code>TT2_SETTLE</code></td><td>无</td><td>客户端 → 服务器</td><td><b>请求服务器立刻【结算关卡】</b>（联机分出胜负后由房主发）—— 图 14</td></tr>
+  </table>
+  <p class="desc"><b class="w">上行下行同名</b>：<code>监听信号</code> 与 <code>发送客户端脚本信号</code> 选同一个名字即可
+  （<code>TT2_MAZE_UP</code> / <code>TT2_CRATE_UP</code> / <code>TT2_MATCH_UP</code> / <code>TT2_SET_WIN</code> / <code>TT2_SET_LOSE</code> /
+  <code>TT2_SET_ESCAPE</code> / <code>TT2_SETTLE</code> 只上行；<code>TT2_SLOT</code> 只下行；
+  <code>TT2_SNAP_1</code> / <code>TT2_SNAP_2</code> / <code>TT2_READY_1</code> / <code>TT2_READY_2</code> 上行是信号、下行是<b>同名关卡变量</b>）。
+  （临时探针 <code>TT2_PROBE_UP</code> / <code>TT2_PROBE</code> 已随客户端探针删除，不用再建。）</p>
+</section>
+
+<section>
+  <h2>关卡实体变量表（在「关卡设置 → 自定义变量」建 <b>9 个</b>，实体类型 = <b>关卡</b>）</h2>
+  <table>
+    <tr><th>变量名</th><th>类型</th><th>谁写</th><th>谁读</th></tr>
+    <tr><td><code>TT2_BEAT</code></td><td>整数</td><td>C0 / C1 定时器</td><td>客户端（心跳诊断）</td></tr>
+    <tr><td><code>TT2_PLAYERS</code></td><td>整数</td><td>C1</td><td>客户端（联机判据 ≥ 2）</td></tr>
+    <tr><td><code>TT2_MAZE</code></td><td>整数列表</td><td>C3（房主 <code>TT2_MAZE_UP</code> 原样落地）</td><td>客户端（首项 = <b>seq 回合号</b>，据此决定何时重开一回合）</td></tr>
+    <tr><td><code>TT2_CRATE</code></td><td>整数列表</td><td>C7（房主 <code>TT2_CRATE_UP</code> 原样落地）</td><td>客户端（非房主按 id 镜像补给箱）</td></tr>
+    <tr><td><code>TT2_WINNER</code></td><td>整数</td><td>C8（房主 <code>TT2_MATCH_UP</code> 原样落地）</td><td>客户端（0 = 未结束，否则 = 胜者槽位）</td></tr>
+    <tr><td><code>TT2_SNAP_1</code></td><td>整数列表</td><td>C4a</td><td>客户端（<b>只读对方槽位那个</b>）</td></tr>
+    <tr><td><code>TT2_SNAP_2</code></td><td>整数列表</td><td>C4b</td><td>同上</td></tr>
+    <tr><td><code>TT2_READY_1</code></td><td>整数列表</td><td>C9a</td><td>客户端（读<b>对方</b>槽位那个；也读房主发布的「强制准备时刻」<code>endBeat</code>）</td></tr>
+    <tr><td><code>TT2_READY_2</code></td><td>整数列表</td><td>C9b</td><td>同上</td></tr>
+  </table>
+  <p class="desc">所有 <b>14 张图</b>都挂在 <b>关卡实体</b> 上。<code>TT2_SLOT</code> / <code>TT2_MAZE_UP</code> / <code>TT2_CRATE_UP</code> /
+  <code>TT2_MATCH_UP</code> / <code>TT2_READY_1</code> / <code>TT2_READY_2</code> / <code>TT2_SET_WIN</code> / <code>TT2_SET_LOSE</code> /
+  <code>TT2_SET_ESCAPE</code> / <code>TT2_SETTLE</code> 不做关卡变量，走信号。
+  <b class="w">v4 权威模型</b>：<b>房主（槽位 1）是这一局的唯一事实源</b> —— 它摇迷宫表、决定补给箱、判定胜负；
+  服务器<b>只做搬运</b>（信号原样写进关卡变量）；各端对自己那辆坦克的位置/武器/存活是权威（走快照变量）。</p>
+</section>
+
+<section>
+  <h2>三层对照表（<b>信号名 ↔ 关卡变量 ↔ 代码字面量</b>；改一处必须三处一起改）</h2>
+  <table>
+    <tr><th>用途</th><th>信号名（信号管理器）</th><th>参数</th><th>关卡变量（关卡设置）</th><th>代码字面量 / 收发点</th></tr>
+    <tr><td>心跳</td><td colspan="2" style="color:var(--dim)">（不用信号，纯定时器）</td><td><code>TT2_BEAT</code></td><td>客户端只读（<code>MENU.syncOnline</code>）</td></tr>
+    <tr><td>人数（联机判据）</td><td colspan="2" style="color:var(--dim)">（不用信号）</td><td><code>TT2_PLAYERS</code></td><td>客户端只读（≥ 2 才算联机）</td></tr>
+    <tr><td>告知槽位</td><td><code>TT2_SLOT</code></td><td>整数</td><td style="color:var(--dim)">—</td><td><code>net.lua SIG.SLOT</code> → <code>MENU.onSlot</code></td></tr>
+    <tr><td>迷宫表</td><td><code>TT2_MAZE_UP</code></td><td>整数列表</td><td><code>TT2_MAZE</code>（首项 seq）</td><td><code>net.lua reportMazeUp</code> → <code>MENU.setMazeData</code></td></tr>
+    <tr><td>位置快照·槽位1</td><td><code>TT2_SNAP_1</code></td><td>整数列表</td><td><code>TT2_SNAP_1</code></td><td><code>net.lua reportSnap(slot=1,…)</code> / <code>online.lua snapVar(1)</code></td></tr>
+    <tr><td>位置快照·槽位2</td><td><code>TT2_SNAP_2</code></td><td>整数列表</td><td><code>TT2_SNAP_2</code></td><td><code>net.lua reportSnap(slot=2,…)</code> / <code>online.lua snapVar(2)</code></td></tr>
+    <tr><td>离散事件</td><td><code>TT2_EVENT</code></td><td>整数列表</td><td style="color:var(--dim)">—（走广播）</td><td><code>net.lua reportEvent</code> ⇄ <code>MENU.onEvent</code>；<code>online.lua EV.*</code></td></tr>
+    <tr><td>延迟</td><td><code>TT2_PING</code></td><td>浮点数</td><td style="color:var(--dim)">—</td><td><code>net.lua reportPing</code> ⇄ <code>MENU.onPong</code></td></tr>
+    <tr><td>补给箱表</td><td><code>TT2_CRATE_UP</code></td><td>整数列表</td><td><code>TT2_CRATE</code></td><td><code>net.lua reportCrates</code> → <code>MENU.syncCrateMirror</code></td></tr>
+    <tr><td>胜负</td><td><code>TT2_MATCH_UP</code></td><td>整数</td><td><code>TT2_WINNER</code></td><td><code>net.lua reportWinner</code> → 客户端读 <code>TT2_WINNER</code></td></tr>
+    <tr><td>准备档·槽位1</td><td><code>TT2_READY_1</code></td><td>整数列表</td><td><code>TT2_READY_1</code></td><td><code>net.lua reportReady(slot=1,…)</code> / <code>online.lua readyVar(1)</code>；<code>MENU.tickReady</code>（倒计时 = <code>endBeat − TT2_BEAT</code>）</td></tr>
+    <tr><td>准备档·槽位2</td><td><code>TT2_READY_2</code></td><td>整数列表</td><td><code>TT2_READY_2</code></td><td><code>net.lua reportReady(slot=2,…)</code> / <code>online.lua readyVar(2)</code>；<code>MENU.tickReady</code></td></tr>
+    <tr><td><b>结算状态</b>（定胜负 / 定「离开即逃跑」）</td><td><code>TT2_SET_WIN</code> / <code>TT2_SET_LOSE</code> / <code>TT2_SET_ESCAPE</code></td><td><b>1 个整数</b>（我的玩家序号）</td><td style="color:var(--dim)">—（只改玩家结算状态）</td><td><code>net.lua reportSetWin/reportSetLose/reportSetEscape(序号)</code>（<code>beginMatch</code> + <code>finishMatch</code> 里发）</td></tr>
+    <tr><td><b>立刻结算关卡</b>（联机分出胜负后）</td><td><code>TT2_SETTLE</code></td><td>无</td><td style="color:var(--dim)">—</td><td><code>net.lua reportSettle</code>（<code>stepFrame</code> 倒数 40 帧后由房主发）</td></tr>
+  </table>
+  <p class="desc"><b class="r">⚠️ 审图第一步永远是逐字核对信号名</b>：把 <code>监听信号</code> / <code>发送客户端脚本信号</code> 上的名字与本表、
+  以及与 <code>src/net.lua</code> 的 <code>SIG.*</code> 常量<b>三处一字不差</b>地对上（历史上就栽在 <code>TT2_PROBE_UP</code> ≠ <code>TT2_PROBE</code>）。</p>
+</section>
+
+<section>
+  <h2>审图四步</h2>
+  <ol class="steps">
+    <li><b>逐字核对信号名</b> —— 每个 <code>监听信号</code> / <code>发送客户端脚本信号</code> 上的名字与代码字面量一字不差。</li>
+    <li><b>核对执行线</b> —— 事件 ▷ 到执行节点 ▷，别漏「循环体」那根。</li>
+    <li><b>核对数据线</b> —— 每个 ○ 出参连到对应入参。</li>
+    <li><b>核对手填常量</b> —— <span class="r">红三角 ＝ 必填未填</span>，照图把常量补齐。</li>
+  </ol>
+</section>
+
+<div id="graphs"></div>
+
+</div>
+
+<script>
+/* ==================================================================
+   数据驱动的 SVG 渲染器：先定义 GRAPHS（节点/行/针脚/连线），
+   再用 JS 生成 SVG；连线的端点由针脚坐标算出（不手写坐标）。
+   ================================================================== */
+const HEAD=26, ROW=18, EORN=17, PADB=12, PINR=4.6, RND=7;
+const BODY='#2a2f3a', BORDER='#3c4453', TXT='#d7dbe4', DIMC='#8fa1bd';
+const VALBG='#1f242d', VALTX='#9fb2cc', EXECL='#dfe4ee', DATAL='#6ea8fe';
+const KC={ev:'#e8385c', ex:'#6fae3a', flow:'#c98a2e', q:'#4a6fa5', op:'#7b5ea7', sv:'#2e8b8b'};
+
+/* 行构造器：I=入参(可带常量值)、O=出参 */
+const I=(name,val)=> (val===undefined ? {i:name} : {i:name, v:val});
+const O=(name)=> ({o:name});
+
+/* ---------------- 几何 ---------------- */
+function geom(n){
+  const nOut=n.eOutN ? n.eOutN.length : 0;
+  const strip=nOut*EORN;
+  const rows=n.rows ? n.rows.length : 0;
+  const noteH=n.note ? 16 : 0;
+  return {strip, top:n.y+HEAD+strip, rows, noteH, h:HEAD+strip+rows*ROW+noteH+PADB};
+}
+function box(n){ const g=geom(n); return {x:n.x, y:n.y, w:n.w, h:g.h}; }
+function execInPt(n){ return {x:n.x, y:n.y+HEAD/2}; }
+function execOutPt(n){ return {x:n.x+n.w, y:n.y+HEAD/2}; }
+function namedExecOutPt(n,i){ return {x:n.x+n.w, y:n.y+HEAD+(i+0.5)*EORN}; }
+function dataInPt(n,i){ const g=geom(n); return {x:n.x, y:g.top+i*ROW+ROW/2}; }
+function dataOutPt(n,i){ const g=geom(n); return {x:n.x+n.w, y:g.top+i*ROW+ROW/2}; }
+
+/* 按标签解析针脚坐标：'@exec'=执行出口、'@in'=执行入口、其余按行扫描 */
+function pinPt(n,label){
+  if(!n) return null;
+  if(label==='@exec') return execOutPt(n);
+  if(label==='@in')   return execInPt(n);
+  if(n.eOutN){ const i=n.eOutN.indexOf(label); if(i>=0) return namedExecOutPt(n,i); }
+  const rows=n.rows||[];
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i];
+    if(r.i===label) return dataInPt(n,i);
+    if(r.o===label) return dataOutPt(n,i);
+    if(r.io){ if(r.io[0]===label) return dataInPt(n,i); if(r.io[1]===label) return dataOutPt(n,i); }
+  }
+  return null;
+}
+
+/* ---------------- 正交折线路由（箱体避让） ---------------- */
+function segHits(x1,y1,x2,y2,r){
+  const minx=Math.min(x1,x2),maxx=Math.max(x1,x2),miny=Math.min(y1,y2),maxy=Math.max(y1,y2);
+  return (maxx>r.x+0.6 && minx<r.x+r.w-0.6 && maxy>r.y+0.6 && miny<r.y+r.h-0.6);
+}
+/* 与已放置线段的重合惩罚（同为竖直/水平、间距<7px、且重叠超过 10px 的部分才计罚，
+   这样"从同一针脚出发的一小段公共短线"是允许的） */
+function ovlPen(p,q,placed){
+  const vert=Math.abs(p.x-q.x)<0.5, horz=Math.abs(p.y-q.y)<0.5;
+  if(!vert && !horz) return 0;
+  let s=0;
+  for(let i=0;i<placed.length;i++){
+    const r=placed[i];
+    const rv=Math.abs(r.x1-r.x2)<0.5, rh=Math.abs(r.y1-r.y2)<0.5;
+    if(vert && rv && Math.abs(p.x-r.x1)<7){
+      const o=Math.min(Math.max(p.y,q.y),Math.max(r.y1,r.y2))
+             -Math.max(Math.min(p.y,q.y),Math.min(r.y1,r.y2));
+      if(o>0) s+=Math.max(0,o-10);
+    } else if(horz && rh && Math.abs(p.y-r.y1)<7){
+      const o=Math.min(Math.max(p.x,q.x),Math.max(r.x1,r.x2))
+             -Math.max(Math.min(p.x,q.x),Math.min(r.x1,r.x2));
+      if(o>0) s+=Math.max(0,o-10);
+    }
+  }
+  return s;
+}
+function routePts(a,b,aBox,bBox,boxes,placed){
+  placed=placed||[];
+  const others=boxes.filter(bx=>bx!==aBox && bx!==bBox);
+  const cands=[];
+  const diffY=Math.abs(a.y-b.y);
+  const dx=b.x-a.x;
+  if(diffY<0.5) cands.push([a,b]);
+  if(dx>1 && diffY>=0.5){
+    [a.x+18, a.x+dx*0.25, a.x+dx*0.5, a.x+dx*0.75, b.x-18].forEach(cx=>{
+      if((cx-a.x)*(cx-b.x)<0) cands.push([a,{x:cx,y:a.y},{x:cx,y:b.y},b]);
+    });
+  }
+  const dyB=Math.max(aBox.y+aBox.h, bBox.y+bBox.h)+18;
+  const dyA=Math.min(aBox.y, bBox.y)-18;
+  [dyB,dyA].forEach(dy=>{
+    const axR=Math.max(aBox.x+aBox.w, bBox.x+bBox.w)+16;
+    const bxL=Math.min(aBox.x, bBox.x)-16;
+    cands.push([a,{x:axR,y:a.y},{x:axR,y:dy},{x:bxL,y:dy},{x:bxL,y:b.y},b]);
+    [a.x+26,a.x+64].forEach(cx1=>{
+      [b.x-26,b.x-64].forEach(cx2=>{
+        cands.push([a,{x:cx1,y:a.y},{x:cx1,y:dy},{x:cx2,y:dy},{x:cx2,y:b.y},b]);
+      });
+    });
+  });
+  let best=cands[0], bestScore=Infinity;
+  cands.forEach(pts=>{
+    let cross=0, len=0, ovl=0;
+    for(let i=0;i<pts.length-1;i++){
+      const p=pts[i], q=pts[i+1];
+      len+=Math.abs(p.x-q.x)+Math.abs(p.y-q.y);
+      others.forEach(bx=>{ if(segHits(p.x,p.y,q.x,q.y,bx)) cross++; });
+      ovl+=ovlPen(p,q,placed);
+    }
+    const score=cross*100000 + ovl*3000 + (pts.length-2)*300 + len;
+    if(score<bestScore){ bestScore=score; best=pts; }
+  });
+  return best;
+}
+function roundedPath(pts,r){
+  let d=`M ${pts[0].x} ${pts[0].y}`;
+  for(let i=1;i<pts.length-1;i++){
+    const p0=pts[i-1], p1=pts[i], p2=pts[i+1];
+    const d1=Math.hypot(p1.x-p0.x,p1.y-p0.y)||1, d2=Math.hypot(p2.x-p1.x,p2.y-p1.y)||1;
+    const rr=Math.min(r, d1/2, d2/2);
+    const a={x:p1.x-(p1.x-p0.x)/d1*rr, y:p1.y-(p1.y-p0.y)/d1*rr};
+    const c={x:p1.x+(p2.x-p1.x)/d2*rr, y:p1.y+(p2.y-p1.y)/d2*rr};
+    d+=` L ${a.x} ${a.y} Q ${p1.x} ${p1.y} ${c.x} ${c.y}`;
+  }
+  const last=pts[pts.length-1];
+  return d+` L ${last.x} ${last.y}`;
+}
+
+/* ---------------- 绘制辅助 ---------------- */
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function f(x){ return Math.round(x*100)/100; }
+
+function edgeSvg(e,gid){
+  const col = e.k==='exec' ? EXECL : DATAL;
+  const marker = e.k==='exec' ? ` marker-end="url(#arw-${gid})"` : '';
+  return `<path class="edge" data-f="${esc(e.f)}" data-t="${esc(e.t)}" d="${roundedPath(e.pts,10)}" fill="none" stroke="${col}" stroke-width="${e.k==='exec'?2:1.7}" stroke-linecap="round"${marker}/>`;
+}
+
+function nodeSvg(n){
+  const g=geom(n), col=KC[n.k]||KC.ex;
+  let s='';
+  // 节点底 + 标题条
+  s+=`<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${g.h}" rx="${RND}" fill="${BODY}" stroke="${BORDER}"/>`;
+  s+=`<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${HEAD}" rx="${RND}" fill="${col}"/>`;
+  s+=`<rect x="${n.x}" y="${n.y+HEAD-RND}" width="${n.w}" height="${RND}" fill="${col}"/>`;
+  // 标题（含小标 #）
+  s+=`<text x="${n.x+11}" y="${n.y+HEAD/2+4.5}" fill="#f7f9fc" font-size="13" font-weight="700">`
+    + esc(n.title)
+    + (n.tag ? `<tspan dx="7" fill="#dbe9ff" font-weight="500" font-size="11">${esc(n.tag)}</tspan>` : '')
+    + `</text>`;
+  const cy=n.y+HEAD/2;
+  // 执行入口（左，▷ 朝右）
+  if(n.eIn){
+    s+=`<circle class="pin" data-pin="${esc(n.id)}#@in" cx="${f(n.x)}" cy="${f(cy)}" r="0.1" fill="none"/>`;
+    s+=`<path d="M ${f(n.x)} ${f(cy-5)} L ${f(n.x+9)} ${f(cy)} L ${f(n.x)} ${f(cy+5)} Z" fill="#eef2f8"/>`;
+  }
+  // 执行出口（右，▷ 朝右）
+  if(n.eOut){
+    s+=`<circle class="pin" data-pin="${esc(n.id)}#@exec" cx="${f(n.x+n.w)}" cy="${f(cy)}" r="0.1" fill="none"/>`;
+    s+=`<path d="M ${f(n.x+n.w-9)} ${f(cy-5)} L ${f(n.x+n.w)} ${f(cy)} L ${f(n.x+n.w-9)} ${f(cy+5)} Z" fill="#eef2f8"/>`;
+  }
+  // 多个命名执行出口（标题行右下方）
+  (n.eOutN||[]).forEach((lb,i)=>{
+    const y=n.y+HEAD+(i+0.5)*EORN;
+    s+=`<circle class="pin" data-pin="${esc(n.id)}#${esc(lb)}" cx="${f(n.x+n.w)}" cy="${f(y)}" r="0.1" fill="none"/>`;
+    s+=`<path d="M ${f(n.x+n.w-9)} ${f(y-4.5)} L ${f(n.x+n.w)} ${f(y)} L ${f(n.x+n.w-9)} ${f(y+4.5)} Z" fill="#eef2f8"/>`;
+    s+=`<text x="${f(n.x+n.w-13)}" y="${f(y+4)}" text-anchor="end" fill="${DIMC}" font-size="11">${esc(lb)}</text>`;
+  });
+  // 参数行
+  const rows=n.rows||[];
+  rows.forEach((r,i)=>{
+    const y=g.top+i*ROW+ROW/2;
+    s+=`<line x1="${n.x}" y1="${f(g.top+i*ROW)}" x2="${n.x+n.w}" y2="${f(g.top+i*ROW)}" stroke="${BORDER}" stroke-width="1" opacity="0.45"/>`;
+    const inLbl = r.io ? r.io[0] : r.i;
+    const outLbl= r.io ? r.io[1] : r.o;
+    if(inLbl!==undefined){
+      s+=`<circle class="pin" data-pin="${esc(n.id)}#${esc(inLbl)}" cx="${f(n.x)}" cy="${f(y)}" r="${PINR}" fill="#1b2029" stroke="#c8d2e0" stroke-width="1.4"/>`;
+      s+=`<text x="${f(n.x+11)}" y="${f(y+4.5)}" fill="${TXT}" font-size="12.5">${esc(inLbl)}</text>`;
+      if(r.v!==undefined){
+        const cw=Math.max(24, 16+String(r.v).length*7.2);
+        const cx=n.x+n.w-8-cw;
+        s+=`<rect x="${f(cx)}" y="${f(y-8.5)}" width="${f(cw)}" height="17" rx="4" fill="${VALBG}" stroke="${BORDER}"/>`;
+        s+=`<text x="${f(cx+cw/2)}" y="${f(y+4)}" text-anchor="middle" fill="${VALTX}" font-size="11" font-family="ui-monospace,Consolas,monospace">${esc(r.v)}</text>`;
+      }
+    }
+    if(outLbl!==undefined){
+      s+=`<circle class="pin" data-pin="${esc(n.id)}#${esc(outLbl)}" cx="${f(n.x+n.w)}" cy="${f(y)}" r="${PINR}" fill="#1b2029" stroke="#c8d2e0" stroke-width="1.4"/>`;
+      s+=`<text x="${f(n.x+n.w-11)}" y="${f(y+4.5)}" text-anchor="end" fill="${TXT}" font-size="12.5">${esc(outLbl)}</text>`;
+    }
+  });
+  // 底部标注
+  if(n.note){
+    const ny=g.top+g.rows*ROW+8;
+    s+=`<text x="${f(n.x+11)}" y="${f(ny+4)}" fill="${n.warn?'#ff9aa8':'#a7bad6'}" font-size="9.6">${esc(n.note)}</text>`;
+  }
+  return s;
+}
+
+/* ---------------- 渲染一张图 ---------------- */
+function buildGraph(g){
+  const byId={}; g.nodes.forEach(n=>byId[n.id]=n);
+  const boxes=g.nodes.map(box);
+  const placed=[];   // 已放置线段累积（供后续边避让，消除重合）
+  const edges=g.edges.map(e=>{
+    const i=e.f.indexOf('#'), j=e.t.indexOf('#');
+    const sn=byId[e.f.slice(0,i)], sl=e.f.slice(i+1);
+    const tn=byId[e.t.slice(0,j)], tl=e.t.slice(j+1);
+    const a=pinPt(sn,sl), b=pinPt(tn,tl);
+    if(!a||!b){ console.warn('bad edge',e); return null; }
+    const pts=routePts(a,b,box(sn),box(tn),boxes,placed);
+    for(let k=0;k<pts.length-1;k++){
+      placed.push({x1:pts[k].x, y1:pts[k].y, x2:pts[k+1].x, y2:pts[k+1].y});
+    }
+    return {f:e.f, t:e.t, k:e.k||'data', a, b, pts};
+  }).filter(Boolean);
+
+  const W=Math.max.apply(null, g.nodes.map(n=>n.x+n.w))+40;
+  const H=Math.max.apply(null, g.nodes.map(n=>n.y+geom(n).h))+40;
+
+  let svg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img">`;
+  svg+=`<defs><marker id="arw-${g.id}" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="6.4" markerHeight="6.4" orient="auto">`
+      +`<path d="M 0 1 L 9 5 L 0 9 Z" fill="${EXECL}"/></marker></defs>`;
+  edges.forEach(e=>{ svg+=edgeSvg(e,g.id); });   // 先画线
+  g.nodes.forEach(n=>{ svg+=nodeSvg(n); });      // 节点压在上面
+  svg+='</svg>';
+  return {id:g.id, svg, edges, nodes:g.nodes};
+}
+
+/* ==================================================================
+   10 张图的数据（v4：C0 / C1 / C2 / C3迷宫 / C4a快照1 / C4b快照2 /
+                    C5事件 / C6延迟 / C7补给箱 / C8胜负）
+   ================================================================== */
+const GRAPHS=[
+/* 图 1／14 --------------------------------------------------------- */
+{ id:'g0', title:'图 1／14　C0 主定时器（唯一周期源）',
+  desc:'进关卡时（实体创建时）启动一个每秒循环的定时器 TT2_BEAT，这是整套联机体系唯一的心跳来源。定时器序列必须接一个浮点列表。',
+  nodes:[
+   {id:'ev',k:'ev',title:'实体创建时',x:40,y:50,w:210,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID')]},
+   {id:'tm',k:'ex',title:'启动定时器',x:430,y:40,w:280,eIn:true,eOut:true,
+    rows:[I('目标实体'),I('定时器名称','TT2_BEAT'),I('是否循环','是'),I('定时器序列')]},
+   {id:'pl',k:'op',title:'拼装列表',x:40,y:270,w:220,
+    rows:[I('0','1.0'),O('列表')]},
+  ],
+  edges:[
+   {f:'ev#@exec', t:'tm#@in', k:'exec'},
+   {f:'pl#列表', t:'tm#定时器序列'},
+   {f:'ev#事件源实体', t:'tm#目标实体'},
+  ]},
+
+/* 图 2／14 --------------------------------------------------------- */
+{ id:'g1', title:'图 2／14　C1 人数 TT2_PLAYERS（挂主定时器，不用任何信号）',
+  desc:'定时器每秒触发一次：把心跳计数写进 TT2_BEAT，把「对局人数」写进 TT2_PLAYERS。客户端读 TT2_PLAYERS ≥ 2 即判定为联机。',
+  nodes:[
+   {id:'ev',k:'ev',title:'定时器触发时',x:40,y:40,w:220,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('定时器名称'),O('定时器序列序号'),O('循环次数')]},
+   {id:'sv1',k:'sv',title:'设置自定义变量',tag:'#1',x:380,y:40,w:260,eIn:true,eOut:true,
+    rows:[I('目标实体'),I('变量名','TT2_BEAT'),I('变量值'),I('是否触发事件','是')]},
+   {id:'sv2',k:'sv',title:'设置自定义变量',tag:'#2',x:700,y:300,w:260,eIn:true,eOut:true,
+    rows:[I('目标实体'),I('变量名','TT2_PLAYERS'),I('变量值'),I('是否触发事件','是')]},
+   {id:'self',k:'q',title:'获取自身实体',x:40,y:250,w:200,
+    rows:[O('自身实体')]},
+   {id:'qn',k:'q',title:'查询对局游玩方式及人数',x:40,y:450,w:260,
+    rows:[O('游玩人数'),O('游玩方式')]},
+  ],
+  edges:[
+   {f:'ev#@exec', t:'sv1#@in', k:'exec'},
+   {f:'sv1#@exec', t:'sv2#@in', k:'exec'},
+   {f:'self#自身实体', t:'sv1#目标实体'},
+   {f:'self#自身实体', t:'sv2#目标实体'},
+   {f:'ev#循环次数', t:'sv1#变量值'},
+   {f:'qn#游玩人数', t:'sv2#变量值'},
+  ]},
+
+/* 图 3／14 --------------------------------------------------------- */
+{ id:'g2', title:'图 3／14　C2 槽位 TT2_SLOT（逐个定向下发）',
+  desc:'接在 C1 的 #2 之后：遍历在场玩家，用「发送客户端脚本信号」把每人的序号 TT2_SLOT 点对点告诉客户端。循环体那根执行线最容易漏。',
+  nodes:[
+   {id:'sv2',k:'sv',title:'设置自定义变量',tag:'#2 · TT2_PLAYERS',x:40,y:40,w:280,eIn:true,eOut:true,
+    rows:[I('目标实体'),I('变量名','TT2_PLAYERS'),I('变量值'),I('是否触发事件','是')]},
+   {id:'it',k:'ex',title:'列表迭代循环',x:450,y:40,w:230,eIn:true,eOutN:['循环体','循环完成'],
+    rows:[I('跳出循环'),I('迭代列表'),O('迭代值')]},
+   {id:'tx',k:'ex',title:'发送客户端脚本信号',x:850,y:40,w:280,eIn:true,eOut:true,
+    rows:[I('目标玩家'),I('参数_1')], note:'信号名 = TT2_SLOT（1 个整数参数）'},
+   {id:'gp',k:'q',title:'获取在场玩家实体列表',x:40,y:250,w:260,
+    rows:[O('玩家实体列表')]},
+   {id:'eg',k:'q',title:'以实体查询GUID',x:450,y:250,w:220,
+    rows:[I('实体'),O('GUID')]},
+   {id:'gs',k:'q',title:'根据玩家GUID获取玩家序号',x:450,y:400,w:300,
+    rows:[I('玩家GUID'),O('玩家序号')]},
+  ],
+  edges:[
+   {f:'sv2#@exec', t:'it#@in', k:'exec'},
+   {f:'it#循环体', t:'tx#@in', k:'exec'},
+   {f:'gp#玩家实体列表', t:'it#迭代列表'},
+   {f:'it#迭代值', t:'tx#目标玩家'},
+   {f:'it#迭代值', t:'eg#实体'},
+   {f:'eg#GUID', t:'gs#玩家GUID'},
+   {f:'gs#玩家序号', t:'tx#参数_1'},
+  ]},
+
+/* 图 4／14 --------------------------------------------------------- */
+{ id:'g3', title:'图 4／14　C3 迷宫表落地（房主上传 TT2_MAZE_UP → 关卡变量 TT2_MAZE）',
+  desc:'联机房主在本端摇出整张迷宫表（整数列表），用 TT2_MAZE_UP 上行；服务器只需把它原样写进关卡变量 TT2_MAZE。表首项 <b>seq = 回合号</b> ⇒ 非房主读到「新 seq」就知道该重开一回合了（回合由房主驱动，回合号与表装在同一个原子单元里、不会错配）。服务器侧不算任何随机数 ⇒ 没有随机整数 / 循环 / 拼装列表 / 节点图变量。',
+  nodes:[
+   {id:'ls',k:'ev',title:'监听信号',x:40,y:40,w:290,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体'),O('参数_1')],
+    note:'信号名 = TT2_MAZE_UP（1 个整数列表参数）'},
+   {id:'self',k:'q',title:'获取自身实体',x:40,y:320,w:210,
+    rows:[O('自身实体')]},
+   {id:'sv',k:'sv',title:'设置自定义变量',x:560,y:40,w:290,eIn:true,eOut:true,
+    rows:[I('目标实体'),I('变量名','TT2_MAZE'),I('变量值'),I('是否触发事件','是')]},
+  ],
+  edges:[
+   {f:'ls#@exec', t:'sv#@in', k:'exec'},
+   {f:'ls#参数_1', t:'sv#变量值'},
+   {f:'self#自身实体', t:'sv#目标实体'},
+  ]},
+
+/* 图 5／14 --------------------------------------------------------- */
+{ id:'g4a', title:'图 5／14　C4a 快照·槽位 1（TT2_SNAP_1 → 关卡变量 TT2_SNAP_1）',
+  desc:'客户端上行发 TT2_SNAP_1 信号（整数列表，6 个一组）；服务器把它原样写进同名关卡变量 <code>TT2_SNAP_1</code>。⚠️ 快照<b>必须按槽位分成两组</b>：共用一个变量会被两端互相覆盖，各端只能拿到对方一半样本（有效采样率掉到 6.25Hz）。本图落地槽位 1。',
+  nodes:[
+   {id:'ls',k:'ev',title:'监听信号',x:40,y:40,w:290,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体'),O('参数_1')],
+    note:'信号名 = TT2_SNAP_1（1 个整数列表参数）'},
+   {id:'sv',k:'sv',title:'设置自定义变量',x:520,y:40,w:290,eIn:true,eOut:true,
+    rows:[I('目标实体'),I('变量名','TT2_SNAP_1'),I('变量值'),I('是否触发事件','是')]},
+   {id:'self',k:'q',title:'获取自身实体',x:40,y:320,w:210,
+    rows:[O('自身实体')]},
+  ],
+  edges:[
+   {f:'ls#@exec', t:'sv#@in', k:'exec'},
+   {f:'ls#参数_1', t:'sv#变量值'},
+   {f:'self#自身实体', t:'sv#目标实体'},
+  ]},
+
+/* 图 6／14 --------------------------------------------------------- */
+{ id:'g4b', title:'图 6／14　C4b 快照·槽位 2（TT2_SNAP_2 → 关卡变量 TT2_SNAP_2）',
+  desc:'与图 5 逐针脚相同，只把两个名字换成 TT2_SNAP_2。客户端<b>只读对方槽位</b>的那个变量（自己的位置本端零延迟）。',
+  nodes:[
+   {id:'ls',k:'ev',title:'监听信号',x:40,y:40,w:290,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体'),O('参数_1')],
+    note:'信号名 = TT2_SNAP_2（1 个整数列表参数）'},
+   {id:'sv',k:'sv',title:'设置自定义变量',x:520,y:40,w:290,eIn:true,eOut:true,
+    rows:[I('目标实体'),I('变量名','TT2_SNAP_2'),I('变量值'),I('是否触发事件','是')]},
+   {id:'self',k:'q',title:'获取自身实体',x:40,y:320,w:210,
+    rows:[O('自身实体')]},
+  ],
+  edges:[
+   {f:'ls#@exec', t:'sv#@in', k:'exec'},
+   {f:'ls#参数_1', t:'sv#变量值'},
+   {f:'self#自身实体', t:'sv#目标实体'},
+  ]},
+
+/* 图 7／14 --------------------------------------------------------- */
+{ id:'g5', title:'图 7／14　C5 事件 TT2_EVENT（广播回所有玩家）',
+  desc:'监听 TT2_EVENT，遍历在场玩家，把收到的整数列表原样广播给每一台客户端。拾取事件（PICK）的 payload = [PICK, slot, crateId, weaponId]；房主收到对方的 PICK 时会按 crateId 从权威补给箱表里删掉那个箱子。',
+  nodes:[
+   {id:'ls',k:'ev',title:'监听信号',x:40,y:40,w:290,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体'),O('参数_1')],
+    note:'信号名 = TT2_EVENT（1 个整数列表参数）'},
+   {id:'it',k:'ex',title:'列表迭代循环',x:430,y:40,w:230,eIn:true,eOutN:['循环体','循环完成'],
+    rows:[I('跳出循环'),I('迭代列表'),O('迭代值')]},
+   {id:'tx',k:'ex',title:'发送客户端脚本信号',x:830,y:40,w:280,eIn:true,eOut:true,
+    rows:[I('目标玩家'),I('参数_1')], note:'信号名 = TT2_EVENT'},
+   {id:'gp',k:'q',title:'获取在场玩家实体列表',x:40,y:340,w:260,
+    rows:[O('玩家实体列表')]},
+  ],
+  edges:[
+   {f:'ls#@exec', t:'it#@in', k:'exec'},
+   {f:'it#循环体', t:'tx#@in', k:'exec'},
+   {f:'gp#玩家实体列表', t:'it#迭代列表'},
+   {f:'it#迭代值', t:'tx#目标玩家'},
+   {f:'ls#参数_1', t:'tx#参数_1'},
+  ]},
+
+/* 图 8／14 --------------------------------------------------------- */
+{ id:'g6', title:'图 8／14　C6 延迟 TT2_PING（原样回发）',
+  desc:'与图 7 逐针脚相同，只把两个信号名换成 TT2_PING（浮点数）。服务器把客户端发来的时间戳原样广播回去，客户端只认自己那一条。',
+  nodes:[
+   {id:'ls',k:'ev',title:'监听信号',x:40,y:40,w:290,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体'),O('参数_1')],
+    note:'信号名 = TT2_PING（1 个浮点数参数）'},
+   {id:'it',k:'ex',title:'列表迭代循环',x:430,y:40,w:230,eIn:true,eOutN:['循环体','循环完成'],
+    rows:[I('跳出循环'),I('迭代列表'),O('迭代值')]},
+   {id:'tx',k:'ex',title:'发送客户端脚本信号',x:830,y:40,w:280,eIn:true,eOut:true,
+    rows:[I('目标玩家'),I('参数_1')], note:'信号名 = TT2_PING'},
+   {id:'gp',k:'q',title:'获取在场玩家实体列表',x:40,y:340,w:260,
+    rows:[O('玩家实体列表')]},
+  ],
+  edges:[
+   {f:'ls#@exec', t:'it#@in', k:'exec'},
+   {f:'it#循环体', t:'tx#@in', k:'exec'},
+   {f:'gp#玩家实体列表', t:'it#迭代列表'},
+   {f:'it#迭代值', t:'tx#目标玩家'},
+   {f:'ls#参数_1', t:'tx#参数_1'},
+  ]},
+
+/* 图 9／14 --------------------------------------------------------- */
+{ id:'g7', title:'图 9／14　C7 补给箱表落地（房主上传 TT2_CRATE_UP → 关卡变量 TT2_CRATE）',
+  desc:'补给箱是<b>持续状态</b>（一直在场上直到被捡）⇒ 走关卡变量、不走一次性事件（丢包能自愈、重连能恢复）。房主是唯一权威：刷箱计时 / 拾取都由它裁决，每次变更把整张表上传；非房主每帧读变量按 id 镜像（表里有本地没有 ⇒ 生成；表里没有本地有 ⇒ 移除）。',
+  nodes:[
+   {id:'ls',k:'ev',title:'监听信号',x:40,y:40,w:290,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体'),O('参数_1')],
+    note:'信号名 = TT2_CRATE_UP（1 个整数列表参数）'},
+   {id:'self',k:'q',title:'获取自身实体',x:40,y:320,w:210,
+    rows:[O('自身实体')]},
+   {id:'sv',k:'sv',title:'设置自定义变量',x:560,y:40,w:290,eIn:true,eOut:true,
+    rows:[I('目标实体'),I('变量名','TT2_CRATE'),I('变量值'),I('是否触发事件','是')]},
+  ],
+  edges:[
+   {f:'ls#@exec', t:'sv#@in', k:'exec'},
+   {f:'ls#参数_1', t:'sv#变量值'},
+   {f:'self#自身实体', t:'sv#目标实体'},
+  ]},
+
+/* 图 10／14 -------------------------------------------------------- */
+{ id:'g8', title:'图 10／14　C8 胜负落地（房主上传 TT2_MATCH_UP → 关卡变量 TT2_WINNER）',
+  desc:'胜负由<b>房主裁定</b>并上传（整数 = 胜者槽位，0 = 本局未结束）；服务器原样写进 TT2_WINNER，各端据此统一结算 ⇒ 不会出现「一端判胜、另一端还在打」。',
+  nodes:[
+   {id:'ls',k:'ev',title:'监听信号',x:40,y:40,w:290,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体'),O('参数_1')],
+    note:'信号名 = TT2_MATCH_UP（1 个整数参数）'},
+   {id:'self',k:'q',title:'获取自身实体',x:40,y:320,w:210,
+    rows:[O('自身实体')]},
+   {id:'sv',k:'sv',title:'设置自定义变量',x:560,y:40,w:290,eIn:true,eOut:true,
+    rows:[I('目标实体'),I('变量名','TT2_WINNER'),I('变量值'),I('是否触发事件','是')]},
+  ],
+  edges:[
+   {f:'ls#@exec', t:'sv#@in', k:'exec'},
+   {f:'ls#参数_1', t:'sv#变量值'},
+   {f:'self#自身实体', t:'sv#目标实体'},
+  ]},
+
+/* 图 11／12 -------------------------------------------------------- */
+{ id:'g9', title:'图 11／14　C9a 准备档·槽位 1 落地（TT2_READY_1 → 关卡变量 TT2_READY_1）',
+  desc:'准备档 = [ready, colorIdx, ctrlKind, endBeat]（整数列表）。它让<b>对面</b>知道「我准备了吗 / 选了什么颜色 / 我用什么设备」；槽位 1（房主）还会在第 4 位发布「<b>强制准备时刻</b> endBeat」（= 届时 <code>TT2_BEAT</code> 的值）。⚠️ <b>30 秒倒计时必须两端同步</b>：两端都算 <code>endBeat − 当前 TT2_BEAT</code> ⇒ 读的是同一份心跳报文，倒计时<b>逐秒一致</b>、到点落在同一个心跳刻 ⇒ 所有人同时强制准备、同时进 3 秒开始倒计时。准备是持续状态 ⇒ 走变量、不走一次性事件。服务器只做<b>原样落地</b>。',
+  nodes:[
+   {id:'ls',k:'ev',title:'监听信号',x:40,y:40,w:290,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体'),O('参数_1')],
+    note:'信号名 = TT2_READY_1（1 个整数列表参数）'},
+   {id:'self',k:'q',title:'获取自身实体',x:40,y:320,w:210,
+    rows:[O('自身实体')]},
+   {id:'sv',k:'sv',title:'设置自定义变量',x:560,y:40,w:290,eIn:true,eOut:true,
+    rows:[I('目标实体'),I('变量名','TT2_READY_1'),I('变量值'),I('是否触发事件','是')]},
+  ],
+  edges:[
+   {f:'ls#@exec', t:'sv#@in', k:'exec'},
+   {f:'ls#参数_1', t:'sv#变量值'},
+   {f:'self#自身实体', t:'sv#目标实体'},
+  ]},
+
+/* 图 12／14 -------------------------------------------------------- */
+{ id:'g10', title:'图 12／14　C9b 准备档·槽位 2 落地（TT2_READY_2 → 关卡变量 TT2_READY_2）',
+  desc:'与图 11 逐针脚相同，只把两个名字换成 TT2_READY_2。⚠️ 必须按槽位拆成两组：共用一个变量会被两端<b>互相覆盖</b>，各端就拿不到对方的准备档（与快照拆两组是同一个理由）。',
+  nodes:[
+   {id:'ls',k:'ev',title:'监听信号',x:40,y:40,w:290,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体'),O('参数_1')],
+    note:'信号名 = TT2_READY_2（1 个整数列表参数）'},
+   {id:'self',k:'q',title:'获取自身实体',x:40,y:320,w:210,
+    rows:[O('自身实体')]},
+   {id:'sv',k:'sv',title:'设置自定义变量',x:560,y:40,w:290,eIn:true,eOut:true,
+    rows:[I('目标实体'),I('变量名','TT2_READY_2'),I('变量值'),I('是否触发事件','是')]},
+  ],
+  edges:[
+   {f:'ls#@exec', t:'sv#@in', k:'exec'},
+   {f:'ls#参数_1', t:'sv#变量值'},
+   {f:'self#自身实体', t:'sv#目标实体'},
+  ]},
+
+/* 图 13／14 -------------------------------------------------------- */
+{ id:'g11', title:'图 13／14　C10 结算状态（TT2_SET_WIN / TT2_SET_LOSE / TT2_SET_ESCAPE → 按「参数_1 = 我的玩家序号」定位玩家）',
+  desc:'<b>为什么要有这张图</b>：平台的 ESC 菜单拦不住（千星奇域保留 ESC）；官方《试玩》§3 明确「玩家可通过<b>完成挑战或者主动退出</b>来触发关卡结算」，而《关卡结算》二说结算按各玩家<b>当时</b>的结算状态落账、且「<b>未定</b>」是默认状态 ⇒ 没设过状态的玩家退出后就按「未定」结算，<b>拿不到活动奖励</b>。<br><b class="r">⚠️ 为什么不用「信号来源实体」</b>：官方《信号》文档说「信号的发送和接收都是<b>全局</b>的」，而事件节点对「信号来源实体」的定义是「<b>使用【发送信号】节点</b>发送该信号的实体」——我们的信号是 <b>Lua 客户端</b>（<code>game.ServerSignal</code>）发的，<b>没有「发送实体」</b> ⇒ 那个出参大概率是<b>空</b>，把它接到「玩家实体」上等于什么都没设（实测现象：结算显示「未完成」）。<br><b class="w">所以三条链都用「参数_1」自报家门</b>：客户端上报时带上<b>自己的玩家序号</b>，服务器侧 <code>根据玩家序号获取玩家GUID → 以GUID查询实体</code> 两步就拿到「我」这个玩家实体（这两个节点的入参类型是「实体」，可直接喂给结算节点）。<br><b class="w">结算规则（用户 2026-10-15 定、2026-10-16 修订）</b>：<br>· <b>单机</b>：任意玩一局、<b>无论模式与输赢</b>，之后<b>以任意方式退出关卡</b>都算已完成 ⇒ 开赛即发 <code>TT2_SET_WIN</code>（预置<b>胜利</b>）；<br>· <b>联机</b>：<b>中途离开者判「逃跑」</b>、留下的一方判「胜利」；正常打完则按比赛规则判胜负（先领先 10 分者胜 / 时间到分高者胜 / 同分进 1 分钟加时后分高者胜）⇒ 进局先发 <code>TT2_SET_ESCAPE</code>（把<b>逃跑合法性设为「否」</b>，谁走谁判逃跑），<b>分出胜负时各端各自</b>报最终状态（赢发 WIN、输发 LOSE）。<br>所以这里有 <b>3 条链</b>。<b class="r">⚠️ 三条链都不要接【结算关卡】</b>——那会<b>立刻结束整局</b>；「分出胜负立刻结算」是 <b>图 14</b> 的事。',
+  nodes:[
+   /* ---- 链 1：TT2_SET_WIN ---- */
+   {id:'ls1',k:'ev',title:'监听信号',x:40,y:40,w:320,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体'),O('参数_1')],
+    note:'信号名 = TT2_SET_WIN（1 个整数参数 = 我的玩家序号）'},
+   {id:'g1s',k:'q',title:'根据玩家序号获取玩家GUID',x:430,y:220,w:330,
+    rows:[I('玩家序号'),O('玩家GUID')],
+    note:'玩家序号 ← 听信号的「参数_1」'},
+   {id:'g1e',k:'q',title:'以GUID查询实体',x:430,y:400,w:280,
+    rows:[I('GUID'),O('实体')],
+    note:'GUID ← 上一步的「玩家GUID」'},
+   {id:'w1',k:'ex',title:'设置玩家结算成功状态',x:820,y:40,w:330,eIn:true,eOut:true,
+    rows:[I('玩家实体'),I('结算状态','胜利')],
+    note:'玩家实体 ← 「以GUID查询实体」的「实体」'},
+   {id:'f1',k:'ex',title:'设置玩家逃跑合法性',x:1200,y:40,w:320,eIn:true,eOut:true,
+    rows:[I('玩家实体'),I('是否合法','是')],
+    note:'玩家实体 ← 同上'},
+   /* ---- 链 2：TT2_SET_LOSE ---- */
+   {id:'ls2',k:'ev',title:'监听信号',x:40,y:560,w:320,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体'),O('参数_1')],
+    note:'信号名 = TT2_SET_LOSE（1 个整数参数 = 我的玩家序号）'},
+   {id:'g2s',k:'q',title:'根据玩家序号获取玩家GUID',x:430,y:740,w:330,
+    rows:[I('玩家序号'),O('玩家GUID')],
+    note:'玩家序号 ← 听信号的「参数_1」'},
+   {id:'g2e',k:'q',title:'以GUID查询实体',x:430,y:920,w:280,
+    rows:[I('GUID'),O('实体')]},
+   {id:'w2',k:'ex',title:'设置玩家结算成功状态',x:820,y:560,w:330,eIn:true,eOut:true,
+    rows:[I('玩家实体'),I('结算状态','失败')],
+    note:'联机：输家'},
+   {id:'f2',k:'ex',title:'设置玩家逃跑合法性',x:1200,y:560,w:320,eIn:true,eOut:true,
+    rows:[I('玩家实体'),I('是否合法','是')]},
+   /* ---- 链 3：TT2_SET_ESCAPE ---- */
+   {id:'ls3',k:'ev',title:'监听信号',x:40,y:1080,w:320,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体'),O('参数_1')],
+    note:'信号名 = TT2_SET_ESCAPE（1 个整数参数 = 我的玩家序号）'},
+   {id:'g3s',k:'q',title:'根据玩家序号获取玩家GUID',x:430,y:1260,w:330,
+    rows:[I('玩家序号'),O('玩家GUID')],
+    note:'玩家序号 ← 听信号的「参数_1」'},
+   {id:'g3e',k:'q',title:'以GUID查询实体',x:430,y:1440,w:280,
+    rows:[I('GUID'),O('实体')]},
+   {id:'f3',k:'ex',title:'设置玩家逃跑合法性',x:820,y:1080,w:330,eIn:true,eOut:true,
+    rows:[I('玩家实体'),I('是否合法','否')],
+    note:'玩家实体 ← 「以GUID查询实体」的「实体」；进局预置：此后离开即判「逃跑」'},
+  ],
+  edges:[
+   {f:'ls1#@exec', t:'w1#@in', k:'exec'},
+   {f:'w1#@exec', t:'f1#@in', k:'exec'},
+   {f:'ls1#参数_1', t:'g1s#玩家序号'},
+   {f:'g1s#玩家GUID', t:'g1e#GUID'},
+   {f:'g1e#实体', t:'w1#玩家实体'},
+   {f:'g1e#实体', t:'f1#玩家实体'},
+   {f:'ls2#@exec', t:'w2#@in', k:'exec'},
+   {f:'w2#@exec', t:'f2#@in', k:'exec'},
+   {f:'ls2#参数_1', t:'g2s#玩家序号'},
+   {f:'g2s#玩家GUID', t:'g2e#GUID'},
+   {f:'g2e#实体', t:'w2#玩家实体'},
+   {f:'g2e#实体', t:'f2#玩家实体'},
+   {f:'ls3#@exec', t:'f3#@in', k:'exec'},
+   {f:'ls3#参数_1', t:'g3s#玩家序号'},
+   {f:'g3s#玩家GUID', t:'g3e#GUID'},
+   {f:'g3e#实体', t:'f3#玩家实体'},
+  ]},
+
+/* 图 14／14 -------------------------------------------------------- */
+{ id:'g12', title:'图 14／14　C11 立刻结算（TT2_SETTLE → 结算关卡）：联机分出胜负后结束本局',
+  desc:'<b>为什么要有这张图</b>：用户规则 —— <b>联机</b>达成胜利条件（领先 ≥ 10 分，或时间到分高者胜、同分进 1 分钟加时后分高者胜）后，要<b>立刻结算本局</b>（而不是等玩家自己按 ESC 退出）。<br><b>时序很重要</b>：客户端先让<b>各端各自</b>把最终状态报上去（<code>TT2_SET_WIN</code> / <code>TT2_SET_LOSE</code>，见图 13），<b>再等约 1.6 秒</b>让对端报文送达，然后<b>由房主</b>发 <code>TT2_SETTLE</code> ⇒ 服务器调【结算关卡】。⚠️ 若抢先把关卡结算掉，后到的「我赢 / 我输」会被吞掉 ⇒ 对端会按进局预置的「逃跑合法性 = 否」被判<b>逃跑</b>。<br>【结算关卡】<b>会立即结束本局</b>，是流程的最后一个节点；它<b>无参数</b>，所以这张图只有<b>一根执行线</b>。',
+  nodes:[
+   {id:'ls',k:'ev',title:'监听信号',x:40,y:40,w:300,eOut:true,
+    rows:[O('事件源实体'),O('事件源GUID'),O('信号来源实体')],
+    note:'信号名 = TT2_SETTLE（无参数）'},
+   {id:'sk',k:'ex',title:'结算关卡',x:440,y:40,w:260,eIn:true,
+    note:'⚠️ 无 ▷ 出口：调用后立刻结束本局'},
+  ],
+  edges:[
+   {f:'ls#@exec', t:'sk#@in', k:'exec'},
+  ]},
+
+];
+
+const RESULTS=GRAPHS.map(buildGraph);
+
+/* 暴露给自检脚本 */
+if(typeof globalThis!=='undefined'){ globalThis.__TT2={graphs:GRAPHS, results:RESULTS}; }
+
+/* ---------------- 挂载到页面 ---------------- */
+(function mount(){
+  if(typeof document==='undefined') return;
+  const wrap=document.getElementById('graphs');
+  if(!wrap) return;
+  GRAPHS.forEach((g,i)=>{
+    const sec=document.createElement('section');
+    sec.className='g';
+    let html='<h2>'+g.title+'</h2><p class="desc">'+g.desc+'</p>';
+    if(g.banner) html+='<p class="banner">'+g.banner+'</p>';
+    html+='<div id="graph-'+g.id+'"></div>';
+    sec.innerHTML=html;
+    wrap.appendChild(sec);
+    const host=sec.querySelector('#graph-'+g.id);
+    if(host) host.innerHTML=RESULTS[i].svg;
+  });
+})();
+</script>
+</body>
+</html>

@@ -15,5 +15,15 @@ __pycache__/
 # 参考素材（反编译产物 / 截图 / 解包工具链，体积大且不参与构建）
 reference/
 
+# 千星奇域官方文档离线归档（体积大，仅本地查阅，不入库）
+docs/ugc_official/
+
 # Trae 生成的分发打包目录（工具产物，不参与构建）
 .trae-html-share-packages/
+
+# 编辑器 / 本地索引配置（不入库）
+.trae/
+
+# 操作系统噪声
+Thumbs.db
+desktop.ini
