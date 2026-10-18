@@ -1,0 +1,22 @@
+{
+  "runtime.version": "Lua 5.3",
+  "workspace": {
+    "checkThirdParty": false
+  },
+  "diagnostics": {
+    "globals": [
+      "game",
+      "Color",
+      "Enum",
+      "script",
+      "typeof",
+      "printerr",
+      "ClientUIControl",
+      "ClientUICursorAreaControl"
+    ],
+    "disable": [
+      "lowercase-global",
+      "unused-local"
+    ]
+  }
+}
